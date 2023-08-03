@@ -445,7 +445,11 @@ pub fn closing(x: i32, y: i32, w: i32, h: i32) {
 	{
 		let (_, _, _, exe, _dll) = crate::platform::get_install_info();
 	    if crate::platform::is_installed() {
-			std::process::Command::new(&exe).arg("--tray").spawn().ok();
+			if !crate::check_process("--tray", false) {
+				if !crate::check_process("", false) {
+					std::process::Command::new(&exe).arg("--tray").spawn().ok();
+				}
+			}
 		}
 	}
 }
