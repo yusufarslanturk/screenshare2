@@ -64,8 +64,10 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
     let open_func = move || {
         #[cfg(not(feature = "flutter"))]
         {
-        crate::run_me::<&str>(vec![]).ok();
-        return;
+        crate::run_me(Vec::<&str>::new()).ok();
+        std::process::exit(0);
+        //crate::run_me::<&str>(vec![]).ok();
+        //return;
         }
         #[cfg(target_os = "macos")]
         crate::platform::macos::handle_application_should_open_untitled_file();

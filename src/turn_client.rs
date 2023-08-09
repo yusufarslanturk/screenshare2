@@ -1,8 +1,10 @@
-use futures::{SinkExt};
+use futures::SinkExt;
 use hbb_common::{
-    bail, lazy_static, log,
+    bail,
+    lazy_static,
+    log,
     tcp::FramedStream,
-    tokio::{self, net::TcpStream, sync::mpsc},
+    tokio::{self, net::TcpStream, sync::mpsc, time::timeout},
     //tokio_util::compat::Compat,
     ResultType,
 };
@@ -12,8 +14,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tokio_rustls::rustls::{self, ClientConfig as TlsClientConfig, OwnedTrustAnchor};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use turn::client::{tcp::TcpSplit, ClientConfig};
+use turn::client::{tcp::TcpTurn, ClientConfig, TlsConfig};
 use webrtc_util::conn::Conn;
 
 use crate::rendezvous_messages::{self, ToJson};
@@ -125,6 +128,7 @@ async fn establish_over_relay(
                     rendezvous_messages::RelayReady::new(peer_id).to_json(),
                 ))
                 .await?;
+            sender.close().await; // close after established
             return Ok(stream);
         }
         Err(e) => bail!("Failed to connect via relay server: {}", e),
@@ -141,7 +145,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
                 // The network environment shouldn't be changed,
                 // as the local ip haven't changed.
                 if cached_local_ip == local_ip {
-                    log::info!("Got public ip from cache: {:?}", public_ip);
+                    log::info!("Got public ip from cache");
                     return Some(public_ip);
                 }
             }
@@ -164,7 +168,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
                         Err(_) => {}
                     }
 
-                    log::info!("got public ip: {} via {}", addr, turn_addr);
+                    log::info!("Got public ip via {}", turn_addr);
                     return;
                 }
             }
@@ -200,25 +204,33 @@ pub fn get_local_ip() -> ResultType<IpAddr> {
 
 pub struct TurnClient {
     client: turn::client::Client,
+    local_addr: SocketAddr,
 }
 
 impl TurnClient {
     pub async fn new(config: TurnConfig) -> ResultType<Self> {
-        let tcp_split = TcpSplit::from(TcpStream::connect(&config.addr).await?);
+        let stream = TcpStream::connect(&config.addr).await?;
+        let local_addr = stream.local_addr()?;
+        let tcp_turn = if let Some(tls) = config.tls_config.as_ref() {
+            TcpTurn::new_tls(tls.client_config.clone(), stream, tls.domain.clone()).await?
+        } else {
+            TcpTurn::from(stream)
+        };
         let mut client = turn::client::Client::new(ClientConfig {
             stun_serv_addr: config.addr.clone(),
             turn_serv_addr: config.addr,
             username: config.username,
             password: config.password,
             realm: String::new(),
+            tls_config: config.tls_config,
             software: String::new(),
             rto_in_ms: 0,
-            conn: Arc::new(tcp_split),
+            conn: Arc::new(tcp_turn),
             vnet: None,
         })
         .await?;
         client.listen().await?;
-        Ok(Self { client })
+        Ok(Self { client, local_addr })
     }
 
     pub async fn get_public_ip(&self) -> ResultType<SocketAddr> {
@@ -231,7 +243,7 @@ impl TurnClient {
     ) -> ResultType<(Arc<impl Conn>, SocketAddr)> {
         let relay_connection = self.client.allocate().await?;
         relay_connection.send_to(b"init", peer_addr).await?;
-        let local_addr = relay_connection.local_addr().await?;
+        let local_addr = relay_connection.local_addr()?;
 
         Ok((
             // Avoid the conn to be dropped, otherwise the timer in it will be
@@ -246,7 +258,6 @@ impl TurnClient {
 
     pub async fn wait_new_connection(&self) -> ResultType<FramedStream> {
         let tcp_stream = self.client.wait_new_connection().await.unwrap();
-        let addr = tcp_stream.local_addr()?;
-        Ok(FramedStream::from(tcp_stream, addr))
+        Ok(FramedStream::from(tcp_stream, self.local_addr))
     }
 }

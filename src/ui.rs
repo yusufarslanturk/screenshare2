@@ -131,8 +131,10 @@ pub fn start(args: &mut [String]) {
             .to_owned();
         args[1] = id;
     }
-    if args.is_empty() {
-        let children: Children = Default::default();
+    let args_string = args.concat().replace("\"", "").replace("[", "").replace("]", "");
+	
+	if args.is_empty() || args_string.is_empty() {
+		let children: Children = Default::default();
         std::thread::spawn(move || check_zombie(children));
         set_version();
         frame.event_handler(UI {});
@@ -187,7 +189,45 @@ pub fn start(args: &mut [String]) {
             Box::new(handler)
         });
         page = "remote.html";
-    } else {
+    } else if cfg!(target_os = "macos") && args_string.starts_with("hoptodesk://connect/") {
+        if args_string.starts_with("hoptodesk://connect/") {
+            let args_stringn = args_string.replace("hoptodesk://connect/", "");
+            let mut iter = args_stringn.split('/');
+            let id = iter.next().unwrap_or("").to_owned();
+            let pass = iter.next().unwrap_or("").to_owned();
+            let teamid = iter.next().unwrap_or("").to_owned();
+            let tokenexp = iter.next().unwrap_or("").to_owned();
+            
+            let args: Vec<String> = iter.map(|x| x.to_owned()).collect();
+
+            if id.is_empty() {
+                return;
+            }
+
+            if !tokenexp.is_empty() {
+                std::fs::write(&Config::path("LastToken.toml"), tokenexp.clone())
+                    .expect("Failed to write tokenexp to file");
+            }
+            
+			frame.set_title(&id);
+			frame.register_behavior("native-remote", move || {
+				let handler = remote::SciterSession::new(
+					"--connect".to_string(),
+					id.clone(),
+					pass.clone(),
+					tokenexp.clone(),
+					args.clone(),
+				);
+				#[cfg(not(any(feature = "flutter", feature = "cli")))]
+				{
+					*CUR_SESSION.lock().unwrap() = Some(handler.inner());
+				}
+				Box::new(handler)
+			});	
+        }
+
+		page = "remote.html";
+	} else {
         log::error!("Wrong command: {:?}", args);
         return;
     }
@@ -363,7 +403,7 @@ impl UI {
     }
 
     fn requires_update(&self) -> bool {
-        //log::info!("from config {} Vs from wire  {}", crate::VERSION, Config::get_option("api_version"));
+        //log::info!("from config {} Vs from wire {}", crate::VERSION, Config::get_option("api_version"));
         get_version_number(crate::VERSION) < get_version_number(&Config::get_option("api_version"))
     }
 	

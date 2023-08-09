@@ -499,7 +499,7 @@ impl Config {
 
     fn file_(suffix: &str) -> PathBuf {
         let name = format!("{}{}", *APP_NAME.read().unwrap(), suffix);
-        Config::with_extension(Self::path(name))
+		Config::with_extension(Self::path(name))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -535,10 +535,50 @@ impl Config {
             #[cfg(target_os = "macos")]
             let org = ORG.read().unwrap().clone();
             // /var/root for root
+
+
+
+
+//xxx
+
+    #[cfg(target_os = "windows")]
+    {
+        // Method 1: Using the dirs crate
+        if let Some(appdata_dir) = dirs::data_dir() {
+            let roaming_dir = appdata_dir.join("Roaming");
+            log::info!("Method 1: dirs crate - AppData\\Roaming folder: {:?}", roaming_dir);
+        } else {
+            log::info!("Method 1: dirs crate - AppData\\Roaming folder not found.");
+        }
+
+        // Method 2: Using the std::env::var function
+        if let Ok(appdata_dir) = std::env::var("APPDATA") {
+            log::info!("Method 2: std::env::var - AppData\\Roaming folder: {}", appdata_dir);
+        } else {
+            log::info!("Method 2: std::env::var - AppData\\Roaming folder not found.");
+        }
+
+        // Method 3: Using the directories-next crate
+        if let Some(project_dirs) = directories_next::ProjectDirs::from("", "", "HopToDesk") {
+            if let Some(appdata_dir) = project_dirs.config_dir().parent() {
+                log::info!("Method 3: directories-next crate - AppData\\Roaming folder: {:?}", appdata_dir);
+            } else {
+                log::info!("Method 3: directories-next crate - AppData\\Roaming folder not found.");
+            }
+        } else {
+            log::info!("Method 3: directories-next crate - AppData\\Roaming folder not found.");
+        }
+    }
+
+
+
+
+
             if let Some(project) =
                 directories_next::ProjectDirs::from("", &org, &APP_NAME.read().unwrap())
             {
-                let mut path = patch(project.config_dir().to_path_buf());
+				let mut path = patch(project.config_dir().to_path_buf());
+								
                 path.push(p);
                 return path;
             }

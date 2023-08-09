@@ -138,6 +138,7 @@ impl RendezvousMediator {
             .await?
             .text()
             .await?;
+			//Config::set_option("teamidx".to_owned(), body.to_string());
         }
         tokio::pin!(socket_packets);
         loop {
@@ -155,10 +156,10 @@ impl RendezvousMediator {
                     last_timer = now;
                     if let Some(last_healthcheck_sent) = last_healthcheck_sent {
                         if now_utc - last_healthcheck_sent > chrono::Duration::seconds(10) {
-                                          log::info!("Server is unresponding, disconnect.");
+                            log::info!("Server is unresponding, disconnect.");
                             break;
                         }
-                    } else if now_utc - last_data_received > chrono::Duration::seconds(90) {
+                    } else if now_utc - last_data_received > chrono::Duration::seconds(15) {
 						#[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
 							let mut body = String::new();
@@ -170,17 +171,19 @@ impl RendezvousMediator {
 								Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: body }).await {
 									log::error!("Failed to list sessions: {}", e);
 								}
-								Err(e) => log::error!("Can't connect to IPC: {}", e)
+								Err(e) => {}
+								//Err(e) => log::error!("Can't connect to IPC: {}", e)
 							}
-									
                         }
-	
-                        log::info!("Sending healthcheck.");
-                        if let Err(error) = sender.send(WsMessage::Text(HEALTHCHECK.to_owned())).await {
-                            log::info!("Send error: {error}, disconnect.");
-                            break;
-                        };
-                        last_healthcheck_sent = Some(chrono::Utc::now());
+						if now_utc - last_data_received > chrono::Duration::seconds(90) {
+							log::info!("Sending healthcheck.");
+							if let Err(error) = sender.send(WsMessage::Text(HEALTHCHECK.to_owned())).await {
+								log::info!("Send error: {error}, disconnect.");
+								break;
+							};
+
+							last_healthcheck_sent = Some(chrono::Utc::now());							
+						}
                     }
                 }
                 Some(data) = socket_packets.next() => {

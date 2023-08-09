@@ -440,9 +440,27 @@ impl ClientInternal {
                 let mut res = Message::new();
                 res.raw = buff.to_vec();
                 res.decode()?;
-				if res.typ.class == CLASS_SUCCESS_RESPONSE {
+                //Original code:
+				/*if res.typ.class == CLASS_SUCCESS_RESPONSE {
                     on_connection_bound.send(tcp_turn.into_stream().await).await.unwrap();
-                }
+                }*/
+				////Fixed code:
+				if res.typ.class == CLASS_SUCCESS_RESPONSE {
+					let send_result = on_connection_bound.send(tcp_turn.into_stream().await).await;
+					match send_result {
+						Ok(_) => {
+							// Message was successfully sent
+							// You can add any additional logic here, if needed
+						}
+						Err(send_err) => {
+							// Handle the error
+							// For example, you could log the error or take corrective actions.
+							// For logging, you can use the `log` crate, and for corrective actions, it depends on your use case.
+							log::error!("Failed to send message: {:?}", send_err);
+						}
+					}
+				}
+				
             }
 
             return Ok(());
