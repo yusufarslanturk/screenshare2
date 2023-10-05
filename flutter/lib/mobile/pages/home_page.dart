@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common/widgets/overlay.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
+import 'package:get/get.dart';
 import '../../common.dart';
 import '../../common/widgets/chat_page.dart';
 import 'connection_page.dart';
 
 abstract class PageShape extends Widget {
   final String title = "";
-  final Icon icon = Icon(null);
+  final Widget icon = Icon(null);
   final List<Widget> appBarActions = [];
 }
 
@@ -22,7 +24,11 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   var _selectedIndex = 0;
+  int get selectedIndex => _selectedIndex;
   final List<PageShape> _pages = [];
+  bool get isChatPageCurrentTab => isAndroid
+      ? _selectedIndex == 1
+      : false; // change this when ios have chat page
 
   void refreshPages() {
     setState(() {
@@ -40,7 +46,7 @@ class _HomePageState extends State<HomePage> {
     _pages.clear();
     _pages.add(ConnectionPage());
     if (isAndroid) {
-      _pages.addAll([ChatPage(), ServerPage()]);
+      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
     }
     _pages.add(SettingsPage());
   }
@@ -81,12 +87,61 @@ class _HomePageState extends State<HomePage> {
               if (index == 1 && _selectedIndex != index) {
                 gFFI.chatModel.hideChatIconOverlay();
                 gFFI.chatModel.hideChatWindowOverlay();
+                gFFI.chatModel
+                    .mobileClearClientUnread(gFFI.chatModel.currentKey.connId);
               }
               _selectedIndex = index;
             }),
           ),
           body: _pages.elementAt(_selectedIndex),
         ));
+  }
+
+  Widget appTitle() {
+    final currentUser = gFFI.chatModel.currentUser;
+    final currentKey = gFFI.chatModel.currentKey;
+    if (_selectedIndex == 1 &&
+        currentUser != null &&
+        currentKey.peerId.isNotEmpty) {
+      final connected =
+          gFFI.serverModel.clients.any((e) => e.id == currentKey.connId);
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Tooltip(
+            message: currentKey.isOut
+                ? translate('Outgoing connection')
+                : translate('Incoming connection'),
+            child: Icon(
+              currentKey.isOut
+                  ? Icons.call_made_rounded
+                  : Icons.call_received_rounded,
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    "${currentUser.firstName}   ${currentUser.id}",
+                  ),
+                  if (connected)
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color.fromARGB(255, 133, 246, 199)),
+                    ).marginSymmetric(horizontal: 2),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    return Text("HopToDesk");
   }
 }
 

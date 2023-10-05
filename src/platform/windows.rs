@@ -972,6 +972,7 @@ fn get_after_install(exe: &str) -> String {
     sc create {app_name} binpath= \"\\\"{exe}\\\" --service\" start= auto DisplayName= \"{app_name} Service\"
 	netsh advfirewall firewall show rule name=\"{app_name} Service\" |  findstr /c:\"{app_name} Service\" > NUL 2>&1
 	IF NOT %ERRORLEVEL% EQU 0 (
+		 netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=out action=allow program=\"{exe}\" enable=yes
 		 netsh advfirewall firewall add rule name=\"{app_name} Service\" dir=in action=allow program=\"{exe}\" enable=yes
 	)	
     sc start {app_name}
@@ -1113,20 +1114,20 @@ copy /Y \"{tmp_path}\\sciter.dll\" \"{path}\\sciter.dll\"
 copy /Y \"{cpathm}\\PrivacyMode.dll\" \"{path}\\PrivacyMode.dll\"
 copy /Y \"{tmp_path}\\PrivacyMode.dll\" \"{path}\\PrivacyMode.dll\"
 copy /Y \"{ORIGIN_PROCESS_EXE}\" \"{path}\\{broker_exe}\"
-\"{src_exe}\" --extract \"{path}\"
-//reg add {subkey} /f
-//reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{exe}\"
-//reg add {subkey} /f /v DisplayName /t REG_SZ /d \"{app_name}\"
-//reg add {subkey} /f /v DisplayVersion /t REG_SZ /d \"{version}\"
-//reg add {subkey} /f /v Version /t REG_SZ /d \"{version}\"
-//reg add {subkey} /f /v InstallLocation /t REG_SZ /d \"{path}\"
-//reg add {subkey} /f /v Publisher /t REG_SZ /d \"{app_name}\"
-//reg add {subkey} /f /v VersionMajor /t REG_DWORD /d {major}
-//reg add {subkey} /f /v VersionMinor /t REG_DWORD /d {minor}
-//reg add {subkey} /f /v VersionBuild /t REG_DWORD /d {build}
-//reg add {subkey} /f /v UninstallString /t REG_SZ /d \"\\\"{exe}\\\" --uninstall\"
-//reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
-//reg add {subkey} /f /v WindowsInstaller /t REG_DWORD /d 0
+copy /Y \"%APPDATA%\\{app_name}\\config\\TeamID.toml\" \"C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\{app_name}\\config\\TeamID.toml\" >nul
+reg add {subkey} /f
+reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{exe}\"
+reg add {subkey} /f /v DisplayName /t REG_SZ /d \"{app_name}\"
+reg add {subkey} /f /v DisplayVersion /t REG_SZ /d \"{version}\"
+reg add {subkey} /f /v Version /t REG_SZ /d \"{version}\"
+reg add {subkey} /f /v InstallLocation /t REG_SZ /d \"{path}\"
+reg add {subkey} /f /v Publisher /t REG_SZ /d \"{app_name}\"
+reg add {subkey} /f /v VersionMajor /t REG_DWORD /d {major}
+reg add {subkey} /f /v VersionMinor /t REG_DWORD /d {minor}
+reg add {subkey} /f /v VersionBuild /t REG_DWORD /d {build}
+reg add {subkey} /f /v UninstallString /t REG_SZ /d \"\\\"{exe}\\\" --uninstall\"
+reg add {subkey} /f /v EstimatedSize /t REG_DWORD /d {size}
+reg add {subkey} /f /v WindowsInstaller /t REG_DWORD /d 0
 cscript \"{mk_shortcut}\"
 cscript \"{uninstall_shortcut}\"
 cscript \"{tray_shortcut}\"
@@ -1308,9 +1309,15 @@ pub fn toggle_blank_screen(v: bool) {
     }
 }
 
-pub fn block_input(v: bool) -> bool {
+pub fn block_input(v: bool) -> (bool, String) {
     let v = if v { TRUE } else { FALSE };
-    unsafe { BlockInput(v) == TRUE }
+    unsafe {
+        if BlockInput(v) == TRUE {
+            (true, "".to_owned())
+        } else {
+            (false, format!("Error code: {}", GetLastError()))
+        }
+    }
 }
 
 pub fn add_recent_document(path: &str) {

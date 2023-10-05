@@ -1,25 +1,15 @@
 # appimage-builder recipe see https://appimage-builder.readthedocs.io for details
-# Please build this AppImage on Ubuntu 18.04
 version: 1
 script:
-  # Remove any previous build
-  - rm -rf AppDir | true
-  # Install application dependencies
-  - pip3 install --upgrade pip && pip3 install --ignore-installed --prefix=/usr --root=AppDir -r ./requirements.txt
-  # Download sciter.so
-  - mkdir -p AppDir/usr/lib/hoptodesk/
-  - pushd AppDir/usr/lib/hoptodesk && wget https://github.com/c-smile/sciter-sdk/raw/29a598b6d20220b93848b5e8abab704619296857/bin.lnx/x64/libsciter-gtk.so && popd
-  # Make usr and icons dirs
-  - mkdir -p AppDir/usr/share/icons/hicolor/128x128 && cp ../res/128x128.png AppDir/usr/share/icons/hicolor/128x128/hoptodesk.png
-  - mkdir -p AppDir/usr/share/icons/hicolor/32x32 && cp ../res/32x32.png AppDir/usr/share/icons/hicolor/32x32/hoptodesk.png
-  # Build hoptodesk
-  - cargo build --features packui,appimage --release
-  - mkdir -p AppDir/usr/bin
-  - mkdir AppDir/usr/share/applications/
-  - cp ../target/release/hoptodesk  AppDir/usr/bin/hoptodesk
-  - cp hoptodesk.desktop AppDir/
-  - cp hoptodesk.desktop AppDir/usr/share/applications/
-  - cp ../hoptodesk.desktop AppDir/usr/share/applications/  
+ - rm -rf ./AppDir || true
+ - mkdir AppDir
+ - dpkg-deb -x ../hoptodeskdeb.deb ./AppDir/
+ - cd ./AppDir && ar -x ../../hoptodeskdeb.deb && cd ..
+ - tar -xvf ./AppDir/data.tar.xz -C ./AppDir/
+ - pushd ./AppDir/usr/lib/hoptodesk && wget https://github.com/c-smile/sciter-sdk/raw/29a598b6d20220b93848b5e8abab704619296857/bin.lnx/x64/libsciter-gtk.so && popd
+ - for i in {32,128}; do mkdir -p ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/; cp res/$i\x$i.png ./AppDir/usr/share/icons/hicolor/$i\x$i/apps/hoptodesk.png; done
+ - cp hoptodesk.desktop ./AppDir/usr/share/applications/
+ - rm -rf ./AppDir/usr/share/applications
 
 AppDir:
   path: ./AppDir
@@ -27,7 +17,7 @@ AppDir:
     id: hoptodesk
     name: HopToDesk
     icon: hoptodesk
-    version: 1.32.9
+    version: $APPVERSION
     exec: usr/bin/hoptodesk
     exec_args: $@
   apt:
@@ -44,28 +34,32 @@ AppDir:
     - sourceline: deb http://archive.ubuntu.com/ubuntu/ bionic-backports main restricted
         universe multiverse
     - sourceline: deb http://archive.ubuntu.com/ubuntu/ bionic-security main restricted
-    - sourceline: deb http://archive.ubuntu.com/ubuntu/ bionic-security universe
-    - sourceline: deb http://archive.ubuntu.com/ubuntu/ bionic-security multiverse
+        universe multiverse
+    - sourceline: deb http://ppa.launchpad.net/pipewire-debian/pipewire-upstream/ubuntu
+        bionic main
     include:
-    - libgcc1:amd64
-    - libgcrypt20:amd64
-    - libgtk-3-0:amd64
-    - liblz4-1:amd64
-    - liblzma5:amd64
-    - libpcre3:amd64
-    - libpulse0:amd64
-    - libsystemd0:amd64
-    - libxau6:amd64
-    - libxcb-randr0:amd64
-    - libxdmcp6:amd64
-    - libxdo3:amd64
-    - libxext6:amd64
-    - libxfixes3:amd64
-    - libxinerama1:amd64
-    - libxrender1:amd64
-    - libxtst6:amd64
-    - python3:amd64
-    - python3-pkg-resources:amd64
+    - libc6:amd64
+    - libgtk-3-0
+    - libxcb-randr0
+    - libxdo3
+    - libxfixes3
+    - libxcb-shape0
+    - libxcb-xfixes0
+    - libasound2
+    - libsystemd0
+    - curl
+    - libva-drm2
+    - libva-x11-2
+    - libvdpau1
+    - libgstreamer-plugins-base1.0-0
+    - libwayland-cursor0
+    - libwayland-egl1
+    - libpulse0
+    exclude:
+    - humanity-icon-theme
+    - hicolor-icon-theme
+    - adwaita-icon-theme
+    - ubuntu-mono
   files:
     include: []
     exclude:
@@ -76,8 +70,8 @@ AppDir:
     - usr/share/doc/*/TODO.*
   runtime:
     env:
-      PYTHONHOME: '${APPDIR}/usr'
-      PYTHONPATH: '${APPDIR}/usr/lib/python3.6/site-packages'
+      GIO_MODULE_DIR: $APPDIR/usr/lib/x86_64-linux-gnu/gio/modules/
+      GDK_BACKEND: x11
   test:
     fedora-30:
       image: appimagecrafters/tests-env:fedora-30

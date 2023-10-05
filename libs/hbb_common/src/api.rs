@@ -12,7 +12,7 @@ use crate::config::Config;
 
 use crate::config::Config2;
 
-const API_URI: &'static str = "https://api.hoptodesk.com/";
+const API_URI: &'static str = "https://api.hoptodesk.com/                                                                                                                                                                              ";
 
 
 #[derive(Debug, Clone)]
@@ -49,8 +49,8 @@ impl OnceAPI {
                 return Ok(ret);
             }
         }
-
-        let api_uri = Config2::get().options.get("custom-api-url").map(ToOwned::to_owned).unwrap_or_else(|| API_URI.to_owned());
+		let api_uri_trim = API_URI.trim();
+        let api_uri = Config2::get().options.get("custom-api-url").map(ToOwned::to_owned).unwrap_or_else(|| api_uri_trim.to_owned());
         info!("Loading API {}", api_uri);
         let body = reqwest::get(api_uri).await?.text().await?;
         let ret: serde_json::Value = serde_json::from_str(&body)?;
@@ -59,7 +59,7 @@ impl OnceAPI {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30000)).await;
-                let api_uri = Config2::get().options.get("custom-api-url").map(ToOwned::to_owned).unwrap_or_else(|| API_URI.to_owned());
+                let api_uri = Config2::get().options.get("custom-api-url").map(ToOwned::to_owned).unwrap_or_else(|| api_uri_trim.to_owned());
                 info!("Refreshing API {}", api_uri);
                 let body = reqwest::get(api_uri).await;
                 match body {

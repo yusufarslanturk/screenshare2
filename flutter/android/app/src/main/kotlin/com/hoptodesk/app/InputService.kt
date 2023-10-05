@@ -236,4 +236,3 @@ class InputService : AccessibilityService() {
 
     override fun onInterrupt() {}
 }
-

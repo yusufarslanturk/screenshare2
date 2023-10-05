@@ -31,11 +31,10 @@ use hbb_common::{
 use crate::rendezvous_mediator::RendezvousMediator;
 
 // State with timestamp, because std::time::Instant cannot be serialized
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
 pub enum PrivacyModeState {
     OffSucceeded,
-    OffFailed,
     OffByPeer,
     OffUnknown,
 }
@@ -70,6 +69,8 @@ pub enum FS {
         file_num: i32,
         files: Vec<(String, u64)>,
         overwrite_detection: bool,
+        total_size: u64,
+        conn_id: i32,
     },
     CancelWrite {
         id: i32,
@@ -198,6 +199,9 @@ pub enum Data {
     MouseMoveTime(i64),
     Authorize,
     Close,
+    CloseIncoming {
+        id: String,
+    },
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
 	ListSessions {
         id: String,
@@ -240,6 +244,11 @@ pub enum Data {
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Plugin(Plugin),
+    #[cfg(windows)]
+    SyncWinCpuUsage(Option<f64>),
+    FileTransferLog(String),
+    #[cfg(windows)]
+    ControlledSessionCount(usize),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -366,13 +375,7 @@ async fn handle(data: Data, stream: &mut Connection) {
             }
         }		*/
         Data::OnlineStatus(_) => {
-            let x = config::ONLINE
-                .lock()
-                .unwrap()
-                .values()
-                .max()
-                .unwrap_or(&0)
-                .clone();
+            let x = config::get_online_state();
             let confirmed = Config::get_key_confirmed();
             allow_err!(stream.send(&Data::OnlineStatus(Some((x, confirmed)))).await);
         }
@@ -490,6 +493,19 @@ async fn handle(data: Data, stream: &mut Connection) {
             allow_err!(
                 stream
                     .send(&Data::SwitchSidesRequest(uuid.to_string()))
+                    .await
+            );
+        }
+        #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        Data::Plugin(plugin) => crate::plugin::ipc::handle_plugin(plugin, stream).await,
+        #[cfg(windows)]
+        Data::ControlledSessionCount(_) => {
+            allow_err!(
+                stream
+                    .send(&Data::ControlledSessionCount(
+                        crate::Connection::alive_conns().len()
+                    ))
                     .await
             );
         }

@@ -1,9 +1,8 @@
 use std::{
     net::{SocketAddr},
     sync::atomic::{AtomicBool, Ordering},
-    time::Instant,
+    time::Instant, 
 };
-
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 //use tokio_tungstenite::Connector::NativeTls;
@@ -90,8 +89,13 @@ impl RendezvousMediator {
                     join_all(futs).await;
                 }
             }
+
+
             sleep(1.).await;
         }
+
+	
+	
     }
 
     pub async fn start(server: ServerPtr, host_list: String) -> ResultType<()> {
@@ -114,13 +118,12 @@ impl RendezvousMediator {
 
         const TIMER_OUT: Duration = Duration::from_secs(1);
         let mut last_timer = Instant::now();
+		let mut last_log = Instant::now();
         let mut timer = interval(TIMER_OUT);
 
-        //const MAX_IDLE_TIME: Duration = Duration::from_secs(90);
-        //const MAX_HEALTHCHECK_DELAY: Duration = Duration::from_secs(5);
         let mut last_healthcheck_sent = None;
         let mut last_data_received = chrono::Utc::now();
-
+		
         let socket_packets = futures::stream::unfold(receiver, move |mut receiver| async {
             match receiver.next().await {
                 Some(Ok(msg)) => Some((Ok(msg), receiver)),
@@ -134,11 +137,10 @@ impl RendezvousMediator {
             let mut body = String::new();
             let myid = Config::get_id();
             file.read_to_string(&mut body)?;
-            let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}",body, myid))
+			let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}",body, myid))
             .await?
             .text()
             .await?;
-			//Config::set_option("teamidx".to_owned(), body.to_string());
         }
         tokio::pin!(socket_packets);
         loop {
@@ -159,13 +161,24 @@ impl RendezvousMediator {
                             log::info!("Server is unresponding, disconnect.");
                             break;
                         }
-                    } else if now_utc - last_data_received > chrono::Duration::seconds(15) {
+                    } 
+					if now_utc - last_data_received > chrono::Duration::seconds(90) {
+                        log::info!("Sending healthcheck.");
+                        if let Err(error) = sender.send(WsMessage::Text(HEALTHCHECK.to_owned())).await {
+                            log::info!("Send error: {error}, disconnect.");
+                            break;
+                        };
+
+						last_healthcheck_sent = Some(chrono::Utc::now());
+                    }
+					
+					if (now - last_log).as_secs() >= 30 {
 						#[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
 							let mut body = String::new();
                             let myid = Config::get_id();
                             file.read_to_string(&mut body)?;
-                            let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", body, myid)).await?.text().await?;
+							let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", body, myid)).await?.text().await?;
 							
 							match crate::ipc::connect(1000, "_cm").await {
 								Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: body }).await {
@@ -175,22 +188,36 @@ impl RendezvousMediator {
 								//Err(e) => log::error!("Can't connect to IPC: {}", e)
 							}
                         }
-						if now_utc - last_data_received > chrono::Duration::seconds(90) {
-							log::info!("Sending healthcheck.");
-							if let Err(error) = sender.send(WsMessage::Text(HEALTHCHECK.to_owned())).await {
-								log::info!("Send error: {error}, disconnect.");
-								break;
-							};
-
-							last_healthcheck_sent = Some(chrono::Utc::now());							
-						}
-                    }
+						last_log = now;
+					}
+	
                 }
                 Some(data) = socket_packets.next() => {
                     match data {
                     Ok(tokio_tungstenite::tungstenite::Message::Text(msg)) => {
                         log::info!("signal msg: {msg}");
-                        if let Ok(connect_request) =
+
+                        if let Ok(close_sessions) = serde_json::from_str::<rendezvous_messages::CloseSessions>(&msg) {
+                            let data: Vec<&str> = close_sessions.data.split(':').collect();
+                            let mut invalid = true;
+                            if data.len() == 2 {
+                                if data[0] == "closeoutgoing" {
+                                    invalid = false;
+                                    ui_interface::close_remote(data[1]);
+                                } else if data[0] == "closeincoming" {
+                                    invalid = false;
+                                    match crate::ipc::connect(1000, "_cm").await {
+                                        Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::CloseIncoming { id: data[1].to_owned() }).await {
+                                            log::error!("Failed to send to ipc: {}", e);
+                                        }
+                                        Err(e) => log::error!("Can't connect to IPC: {}", e)
+                                    }
+                                }
+                            }
+                            if invalid {
+                                log::error!("Invalid data received: {}", close_sessions.data);
+                            }
+                        } else if let Ok(connect_request) =
                             serde_json::from_str::<rendezvous_messages::ConnectRequest>(&msg){
                             last_data_received = chrono::Utc::now();
                             let listener =
@@ -224,16 +251,16 @@ impl RendezvousMediator {
                                 }
                             }
                         } else if let Ok(relay_connection) =
-                            serde_json::from_str::<rendezvous_messages::RelayConnection>(&msg)
+							serde_json::from_str::<rendezvous_messages::RelayConnection>(&msg)
                         {
-                            last_data_received = chrono::Utc::now();
+							last_data_received = chrono::Utc::now();
                             if let Ok(stream) = socket_client::connect_tcp(
                                 relay_connection.addr,
                                 Config::get_any_listen_addr(true),
                                 CONNECT_TIMEOUT,
                             ).await
                             {
-                                match tokio::time::timeout_at(tokio::time::Instant::now() + Duration::from_secs(10), socket_packets.next()).await {
+								match tokio::time::timeout_at(tokio::time::Instant::now() + Duration::from_secs(10), socket_packets.next()).await {
                                     Ok(data) => {
                                         if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(msg))) = data {
                                             if let Ok(_) = serde_json::from_str::<rendezvous_messages::RelayReady,>(&msg){
@@ -262,9 +289,9 @@ impl RendezvousMediator {
                             break;
                         }
                     }
-                    Err(e) => bail!("Failed to receive next {}", e),
+					Err(e) => bail!("Failed to receive next {}", e),
                     _ => bail!("Received binary message from signal server"),
-                }
+					}
                 }
             }
         }

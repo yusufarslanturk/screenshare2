@@ -48,6 +48,11 @@ pub const DST_STRIDE_RGBA: usize = 1;
 // the executable name of the portable version
 pub const PORTABLE_APPNAME_RUNTIME_ENV_KEY: &str = "HOPTODESK_APPNAME";
 
+pub const PLATFORM_WINDOWS: &str = "Windows";
+pub const PLATFORM_LINUX: &str = "Linux";
+pub const PLATFORM_MACOS: &str = "Mac OS";
+pub const PLATFORM_ANDROID: &str = "Android";
+
 pub mod input {
     pub const MOUSE_TYPE_MOVE: i32 = 0;
     pub const MOUSE_TYPE_DOWN: i32 = 1;
@@ -649,7 +654,9 @@ pub async fn get_nat_type(ms_timeout: u64) -> i32 {
 async fn test_rendezvous_server_() {
     //let servers = Config::get_rendezvous_servers();
     if let Some(servers) = Config::get_rendezvous_servers().await {
-        hbb_common::config::ONLINE.lock().unwrap().clear();
+	    if servers.len() <= 1 {
+	        return;
+	    }
         let mut futs = Vec::new();
         for host in servers {
             futs.push(tokio::spawn(async move {
@@ -949,14 +956,23 @@ pub async fn get_request_sync(url: String, header: &str) -> ResultType<String> {
 }
 
 #[inline]
-pub fn make_privacy_mode_msg(state: back_notification::PrivacyModeState) -> Message {
+pub fn make_privacy_mode_msg_with_details(state: back_notification::PrivacyModeState, details: String) -> Message {
     let mut misc = Misc::new();
-    let mut back_notification = BackNotification::new();
+    let mut back_notification = BackNotification {
+        details,
+        ..Default::default()
+    };
     back_notification.set_privacy_mode_state(state);
     misc.set_back_notification(back_notification);
     let mut msg_out = Message::new();
     msg_out.set_misc(misc);
     msg_out
+}
+
+
+#[inline]
+pub fn make_privacy_mode_msg(state: back_notification::PrivacyModeState) -> Message {
+    make_privacy_mode_msg_with_details(state, "".to_owned())
 }
 
 pub fn is_keyboard_mode_supported(keyboard_mode: &KeyboardMode, version_number: i64) -> bool {
@@ -1032,7 +1048,9 @@ pub fn decode64<T: AsRef<[u8]>>(input: T) -> Result<Vec<u8>, base64::DecodeError
 pub async fn get_key(sync: bool) -> String {
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
-        return lic.key;
+        if !lic.key.is_empty() {
+            return lic.key;
+        }
     }
     #[cfg(target_os = "ios")]
     let mut key = Config::get_option("key");
@@ -1116,6 +1134,7 @@ pub fn check_process(arg: &str, same_uid: bool) -> bool {
     if let Ok(linked) = path.read_link() {
         path = linked;
     }
+    let path = path.to_string_lossy().to_lowercase();
     let my_uid = sys
         .process((std::process::id() as usize).into())
         .map(|x| x.user_id())
@@ -1125,7 +1144,7 @@ pub fn check_process(arg: &str, same_uid: bool) -> bool {
         if let Ok(linked) = cur_path.read_link() {
             cur_path = linked;
         }
-        if cur_path != path {
+        if cur_path.to_string_lossy().to_lowercase() != path {
             continue;
         }
         if p.pid().to_string() == std::process::id().to_string() {

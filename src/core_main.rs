@@ -8,6 +8,8 @@ use hbb_common::platform::register_breakdown_handler;
 
 use std::fs::write;
 use hbb_common::{config::{Config},};
+//use std::fs;
+//use std::io::Read;
 
 /// shared by flutter and sciter main function
 ///
@@ -49,7 +51,7 @@ pub fn core_main() -> Option<Vec<String>> {
         if crate::check_process("--server", false) && !crate::check_process("--tray", true) {
             #[cfg(target_os = "linux")]
             hbb_common::allow_err!(crate::platform::check_autostart_config());
-            hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
+            //hbb_common::allow_err!(crate::run_me(vec!["--tray"]));
         }
     }
     #[cfg(not(debug_assertions))]
@@ -191,9 +193,13 @@ pub fn core_main() -> Option<Vec<String>> {
 						new_args.push(password.to_owned());
 						
 					}
+					/*if let Some(teamid) = parts.next() {
+						write(&Config::path("TeamID.toml"), teamid).expect("Failed to write teamid to file");
+					}*/
 					if let Some(teamid) = parts.next() {
 						if teamid.len() == 16 {
-							write(&Config::path("TeamID.toml"), teamid).expect("Failed to write teamid to file");
+							write(&Config::path("TeamID.toml"), teamid).expect("Failed to write TeamID to file");
+							//Config::set_option("teamidx".to_owned(), teamid.to_string());
 						}
 					}					
 					if let Some(tokenex) = parts.next() {
@@ -273,7 +279,8 @@ pub fn core_main() -> Option<Vec<String>> {
             }
             return None;
         } else if args[0] == "--get-id" {
-            println!("{}", crate::ipc::get_id());
+			println!("{}", crate::ipc::get_id());
+			//return None;
 			std::process::exit(0);
 /*			if crate::platform::is_root() {
                 println!("{}", crate::ipc::get_id());

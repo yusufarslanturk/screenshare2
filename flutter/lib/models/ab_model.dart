@@ -1,30 +1,58 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common/widgets/peers_view.dart';
 import 'package:flutter_hbb/models/model.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
+import 'package:bot_toast/bot_toast.dart';
 import 'package:http/http.dart' as http;
 
 import '../common.dart';
 
-class AbModel {
-  var abLoading = false.obs;
-  var abError = "".obs;
-  var tags = [].obs;
-  var peers = List<Peer>.empty(growable: true).obs;
+final syncAbOption = 'sync-ab-with-recent-sessions';
+bool shouldSyncAb() {
+  return bind.mainGetLocalOption(key: syncAbOption).isNotEmpty;
+}
 
-  var selectedTags = List<String>.empty(growable: true).obs;
+final sortAbTagsOption = 'sync-ab-tags';
+bool shouldSortTags() {
+  return bind.mainGetLocalOption(key: sortAbTagsOption).isNotEmpty;
+}
+
+class AbModel {
+  final abLoading = false.obs;
+  final abError = "".obs;
+  final pushError = "".obs;
+  final tags = [].obs;
+  final peers = List<Peer>.empty(growable: true).obs;
+  final sortTags = shouldSortTags().obs;
+  final retrying = false.obs;
+  bool get emtpy => peers.isEmpty && tags.isEmpty;
+
+  final selectedTags = List<String>.empty(growable: true).obs;
+  var initialized = false;
+  var licensedDevices = 0;
+  var _syncAllFromRecent = true;
+  var _syncFromRecentLock = false;
+  var _timerCounter = 0;
+  var _cacheLoadOnceFlag = false;
 
   WeakReference<FFI> parent;
 
   AbModel(this.parent);
 
-  Future<dynamic> pullAb() async {
+  Future<void> pullAb({force = true, quiet = false}) async {
     if (gFFI.userModel.userName.isEmpty) return;
-    abLoading.value = true;
-    abError.value = "";
+    if (abLoading.value) return;
+    if (!force && initialized) return;
+    if (!quiet) {
+      abLoading.value = true;
+      abError.value = "";
+    }
     final api = "${await bind.mainGetApiServer()}/api/ab/get";
     try {
       var authHeaders = getHttpHeaders();
@@ -49,23 +77,20 @@ class AbModel {
             }
           }
         }
-        return resp.body;
-      } else {
-        return "";
       }
     } catch (err) {
-      err.printError();
       abError.value = err.toString();
     } finally {
       abLoading.value = false;
+      initialized = true;
     }
-    return null;
   }
 
   Future<void> reset() async {
     await bind.mainSetLocalOption(key: "selected-tags", value: '');
     tags.clear();
     peers.clear();
+    initialized = false;
   }
 
   void addId(String id, String alias, List<dynamic> tags) {
@@ -101,7 +126,6 @@ class AbModel {
   }
 
   Future<void> pushAb() async {
-    abLoading.value = true;
     final api = "${await bind.mainGetApiServer()}/api/ab";
     var authHeaders = getHttpHeaders();
     authHeaders['Content-Type'] = "application/json";
@@ -110,16 +134,11 @@ class AbModel {
       "data": jsonEncode({"tags": tags, "peers": peersJsonData})
     });
     try {
-      final resp =
-          await http.post(Uri.parse(api), headers: authHeaders, body: body);
-      abError.value = "";
-      await pullAb();
-      debugPrint("resp: ${resp.body}");
+      await http.post(Uri.parse(api), headers: authHeaders, body: body);
+      await pullAb(quiet: true);
     } catch (e) {
-      abError.value = e.toString();
-    } finally {
-      abLoading.value = false;
-    }
+      BotToast.showText(contentColor: Colors.red, text: e.toString());
+    } finally {}
   }
 
   Peer? find(String id) {
@@ -169,6 +188,21 @@ class AbModel {
     if (it.isNotEmpty) {
       it.first.alias = value;
       await pushAb();
+  Future<void> loadCache() async {
+    try {
+      if (_cacheLoadOnceFlag || abLoading.value || initialized) return;
+      _cacheLoadOnceFlag = true;
+      final access_token = bind.mainGetLocalOption(key: 'access_token');
+      if (access_token.isEmpty) return;
+      final cache = await bind.mainLoadAb();
+      if (abLoading.value) return;
+      final data = jsonDecode(cache);
+      if (data == null || data['access_token'] != access_token) return;
+      //_deserialize(data);
+    } catch (e) {
+      debugPrint("load ab cache: $e");
+    }
+  }
     }
   }
 

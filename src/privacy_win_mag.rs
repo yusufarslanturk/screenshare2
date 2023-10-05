@@ -285,6 +285,11 @@ pub fn start() -> ResultType<()> {
     Ok(())
 }
 
+#[inline]
+pub fn stop() {
+    //WND_HANDLERS.lock().unwrap().reset();
+}
+
 unsafe fn inject_dll<'a>(hproc: HANDLE, hthread: HANDLE, dll_file: &'a str) -> ResultType<()> {
     let dll_file_utf16: Vec<u16> = dll_file.encode_utf16().chain(Some(0).into_iter()).collect();
 
@@ -441,7 +446,7 @@ pub(super) mod privacy_hook {
                     }
                     Err(e) => {
                         // Fatal error
-                        tx.send(format!("Unexpected err when hook {}", e)).unwrap();
+                        allow_err!(tx.send(format!("Unexpected err when hook {}", e)));
                         return;
                     }
                 }

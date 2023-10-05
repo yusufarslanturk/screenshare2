@@ -194,7 +194,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Please enter the folder name", "Vnesite ime mape"),
         ("Disable Wayland", "Popravi"),
         ("Warning", "Opozorilo"),
-        ("Login screen using Wayland is not supported", "Prijava z Waylandom ni podprta"),
+        ("Login screen using Wayland is not supported.", "Prijava z Waylandom ni podprta"),
         ("Reboot required", "Potreben je ponovni zagon"),
         ("Unsupported display server ", "Nepodprt zaslonski strežnik"),
         ("x11 expected", "Pričakovan X11"),

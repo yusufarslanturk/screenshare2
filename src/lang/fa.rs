@@ -203,7 +203,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Please enter the folder name", "نام پوشه را وارد کنید"),
         ("Disable Wayland", "بازسازی"),
         ("Warning", "هشدار"),
-        ("Login screen using Wayland is not supported", "پشتیبانی نمی شود Wayland ورود به سیستم با استفاده از "),
+        ("Login screen using Wayland is not supported.", "پشتیبانی نمی شود Wayland ورود به سیستم با استفاده از "),
         ("Reboot required", "راه اندازی مجدد مورد نیاز است"),
         ("Unsupported display server ", "سرور تصویر پشتیبانی نشده است"),
         ("x11 expected", ""),

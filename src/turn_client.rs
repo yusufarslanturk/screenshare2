@@ -30,9 +30,25 @@ pub struct TurnConfig {
     addr: String,
     username: String,
     password: String,
+    tls_config: Option<TlsConfig>,
 }
 
 async fn get_turn_servers() -> Option<Vec<TurnConfig>> {
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    root_cert_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
+    }));
+    let tls_config = Arc::new(
+        TlsClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_cert_store)
+            .with_no_client_auth(),
+    );
+
     let map = hbb_common::api::call_api().await.ok()?;
     let mut servers = Vec::new();
     for server in map["turnservers"].as_array()? {
@@ -41,6 +57,17 @@ async fn get_turn_servers() -> Option<Vec<TurnConfig>> {
                 addr: format!("{}:{}", server["host"].as_str()?, server["port"].as_str()?),
                 username: server["username"].as_str()?.to_string(),
                 password: server["password"].as_str()?.to_string(),
+                tls_config: None,
+            });
+        } else if server["protocol"].as_str()? == "turn-tls" {
+            servers.push(TurnConfig {
+                addr: format!("{}:{}", server["host"].as_str()?, server["port"].as_str()?),
+                username: server["username"].as_str()?.to_string(),
+                password: server["password"].as_str()?.to_string(),
+                tls_config: Some(TlsConfig {
+                    client_config: tls_config.clone(),
+                    domain: server["host"].as_str()?.try_into().unwrap(),
+                }),
             });
         }
     }
@@ -50,14 +77,13 @@ async fn get_turn_servers() -> Option<Vec<TurnConfig>> {
 pub async fn connect_over_turn_servers(
     peer_id: &str,
     peer_addr: SocketAddr,
-    sender: crate::client::WsSender,
+    sender: Arc<tokio::sync::Mutex<crate::client::WsSender>>,
 ) -> ResultType<(Arc<impl Conn>, FramedStream)> {
     let turn_servers = match get_turn_servers().await {
         Some(servers) => servers,
         None => bail!("empty turn servers!"),
     };
     let srv_len = turn_servers.len();
-    let sender = Arc::new(tokio::sync::Mutex::new(sender));
     let (tx, mut rx) = mpsc::channel(srv_len);
     let mut handles = Vec::new();
     for config in turn_servers {
@@ -70,29 +96,29 @@ pub async fn connect_over_turn_servers(
                 "[turn] start establishing over TURN server: {}",
                 turn_server
             );
-            if let Ok(turn_client) = TurnClient::new(config).await {
-                match turn_client.create_relay_connection(peer_addr).await {
-                    Ok(relay) => {
-                        let conn = relay.0;
-                        let relay_addr = relay.1;
-                        if let Ok(stream) =
-                            establish_over_relay(&peer_id, turn_client, relay_addr, sender).await
-                        {
-                            if tx.send(Some((conn, stream))).await.is_err() {
-                                log::warn!("failed to send result to channel");
-                            }
-                            log::info!(
-                                "[turn] connection has been established by TURN server {}",
-                                turn_server
-                            );
-                            return;
-                        }
-                    }
-                    Err(err) => log::warn!("create relay conn failed: {}", err),
-                };
+            let conn = match timeout(
+                tokio::time::Duration::from_secs(7),
+                create_relay_connection(config, &peer_id, peer_addr, sender.clone()),
+            )
+            .await
+            {
+                Ok(conn) => conn,
+                Err(err) => {
+                    log::warn!(
+                        "[turn] didn't establish over TURN server: {} - {}",
+                        turn_server,
+                        err
+                    );
+                    None
+                }
+            };
+            if conn.is_none() {
+                log::warn!("[turn] didn't establish over TURN server: {}", turn_server);
+            } else {
+                log::info!("[turn] established over TURN server: {}", turn_server);
             }
-            if tx.send(None).await.is_err() {
-                log::warn!("failed to send result to channel");
+            if tx.send(conn).await.is_err() {
+                log::warn!("failed to send result to channel: {}", turn_server);
             }
         });
         handles.push(handle);
@@ -107,6 +133,29 @@ pub async fn connect_over_turn_servers(
         }
     }
     bail!("Failed to connect via relay server: all candidates are failed!")
+}
+
+async fn create_relay_connection(
+    config: TurnConfig,
+    peer_id: &str,
+    peer_addr: SocketAddr,
+    sender: Arc<tokio::sync::Mutex<crate::client::WsSender>>,
+) -> Option<(Arc<impl Conn>, FramedStream)> {
+    if let Ok(turn_client) = TurnClient::new(config).await {
+        match turn_client.create_relay_connection(peer_addr).await {
+            Ok(relay) => {
+                let conn = relay.0;
+                let relay_addr = relay.1;
+                if let Ok(stream) =
+                    establish_over_relay(&peer_id, turn_client, relay_addr, sender).await
+                {
+                    return Some((conn, stream));
+                }
+            }
+            Err(err) => log::warn!("create relay conn failed: {}", err),
+        }
+    }
+    return None;
 }
 
 async fn establish_over_relay(
@@ -128,7 +177,7 @@ async fn establish_over_relay(
                     rendezvous_messages::RelayReady::new(peer_id).to_json(),
                 ))
                 .await?;
-            sender.close().await; // close after established
+            let _ = sender.close().await; // close after established
             return Ok(stream);
         }
         Err(e) => bail!("Failed to connect via relay server: {}", e),

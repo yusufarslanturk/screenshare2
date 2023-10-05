@@ -80,7 +80,6 @@ struct IpcTaskRunner<T: InvokeUiCM> {
     file_transfer_enabled_peer: bool,
 }
 
-
 lazy_static::lazy_static! {
     static ref CLIENTS: RwLock<HashMap<i32, Client>> = Default::default();
     static ref CLICK_TIME: AtomicI64 = AtomicI64::new(0);
@@ -107,6 +106,8 @@ pub trait InvokeUiCM: Send + Clone + 'static + Sized {
     fn show_elevation(&self, show: bool);    
     
     fn update_voice_call_state(&self, client: &Client);
+
+    fn file_transfer_log(&self, log: String);
 }
 
 impl<T: InvokeUiCM> Deref for ConnectionManager<T> {
@@ -184,11 +185,12 @@ impl<T: InvokeUiCM> ConnectionManager<T> {
 
         #[cfg(windows)]
         {
-            ContextSend::proc(|context: &mut Box<CliprdrClientContext>| -> u32 {
+            ContextSend::proc(|context: &mut CliprdrClientContext| -> u32 {
                 empty_clipboard(context, id);
                 0
             });
         }
+
         #[cfg(any(target_os = "android"))]
         if CLIENTS
             .read()
@@ -273,14 +275,25 @@ pub fn close(id: i32) {
 
 #[inline]
 pub fn remove(id: i32) {
-    CLIENTS.write().unwrap().remove(&id);
+	CLIENTS.write().unwrap().remove(&id);
 }
+
+fn close_incoming(id: &str) {
+    CLIENTS.write().unwrap().retain(|_, client| {
+        if client.peer_id == id {
+            allow_err!(client.tx.send(Data::Close));
+            return false;
+        }
+        true
+    });
+}
+
 
 async fn tell_sessions(body: String, myid: String, client_ids: String) {
 	let url = format!(
         "https://api.hoptodesk.com/?teamid={}&id={}&clientidslist={}", body, myid, client_ids
     );
-    let response = reqwest::get(&url)
+	let response = reqwest::get(&url)
         .await
         .expect("Error making HTTP GET request");
     let response_text = response.text().await.expect("Error reading API response.");
@@ -324,13 +337,15 @@ fn list_sessions(_id: &str) {
     }
 }
 
+
+
 // server mode send chat to peer
 #[inline]
 #[cfg(not(any(target_os = "ios")))]
 pub fn send_chat(id: i32, text: String) {
-    let clients = CLIENTS.read().unwrap();
+	let clients = CLIENTS.read().unwrap();
     if let Some(client) = clients.get(&id) {
-        allow_err!(client.tx.send(Data::ChatMessage { text }));
+		allow_err!(client.tx.send(Data::ChatMessage { text }));
     }
 }
 
@@ -402,6 +417,8 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                 );
             }
         }
+        let (tx_log, mut rx_log) = mpsc::unbounded_channel::<String>();
+
         self.running = false;
         loop {
             tokio::select! {
@@ -432,10 +449,13 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     log::info!("cm ipc connection closed from connection request");
                                     break;
                                 }
+                                Data::CloseIncoming { id } => {
+                                    close_incoming(&id);
+                                }
                                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 								Data::ListSessions { id } => {
 									list_sessions(&id);
-                                }	
+                                }								
                                 Data::Disconnected => {
                                     self.close = false;
                                     log::info!("cm ipc connection disconnect");
@@ -455,12 +475,17 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     if let ipc::FS::WriteBlock { id, file_num, data: _, compressed } = fs {
                                         if let Ok(bytes) = self.stream.next_raw().await {
                                             fs = ipc::FS::WriteBlock{id, file_num, data:bytes.into(), compressed};
-                                            handle_fs(fs, &mut write_jobs, &self.tx).await;
+                                            handle_fs(fs, &mut write_jobs, &self.tx, Some(&tx_log)).await;
                                         }
                                     } else {
-                                        handle_fs(fs, &mut write_jobs, &self.tx).await;
+                                        handle_fs(fs, &mut write_jobs, &self.tx, Some(&tx_log)).await;
                                     }
+                                    let log = fs::serialize_transfer_jobs(&write_jobs);
+                                    self.cm.ui_handler.file_transfer_log(log);
                                 }
+                                Data::FileTransferLog(log) => {
+                                    self.cm.ui_handler.file_transfer_log(log);
+                                }                                
                                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                                 Data::ClipboardFile(_clip) => {
                                     #[cfg(windows)]
@@ -476,7 +501,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                             ContextSend::set_is_stopped();
                                         } else {
                                             let conn_id = self.conn_id;
-                                            ContextSend::proc(|context: &mut Box<CliprdrClientContext>| -> u32 {
+                                            ContextSend::proc(|context: &mut CliprdrClientContext| -> u32 {
                                                 clipboard::server_clip_file(context, conn_id, _clip)
                                             });
                                         }
@@ -680,7 +705,7 @@ pub async fn start_listen<T: InvokeUiCM>(
                 cm.new_message(current_id, text);
             }
             Some(Data::FS(fs)) => {
-                handle_fs(fs, &mut write_jobs, &tx).await;
+                handle_fs(fs, &mut write_jobs, &tx, None).await;
             }
             Some(Data::Close) => {
                 break;
@@ -695,7 +720,13 @@ pub async fn start_listen<T: InvokeUiCM>(
 }
 
 #[cfg(not(any(target_os = "ios")))]
-async fn handle_fs(fs: ipc::FS, write_jobs: &mut Vec<fs::TransferJob>, tx: &UnboundedSender<Data>) {
+async fn handle_fs(
+    fs: ipc::FS,
+    write_jobs: &mut Vec<fs::TransferJob>,
+    tx: &UnboundedSender<Data>,
+    tx_log: Option<&UnboundedSender<String>>,
+) {
+    use hbb_common::fs::serialize_transfer_job;
     match fs {
         ipc::FS::ReadDir {
             dir,
@@ -722,10 +753,12 @@ async fn handle_fs(fs: ipc::FS, write_jobs: &mut Vec<fs::TransferJob>, tx: &Unbo
             file_num,
             mut files,
             overwrite_detection,
+            total_size,
+            conn_id,
         } => {
             // cm has no show_hidden context
             // dummy remote, show_hidden, is_remote
-            write_jobs.push(fs::TransferJob::new_write(
+            let mut job = fs::TransferJob::new_write(
                 id,
                 "".to_string(),
                 path,
@@ -741,11 +774,16 @@ async fn handle_fs(fs: ipc::FS, write_jobs: &mut Vec<fs::TransferJob>, tx: &Unbo
                     })
                     .collect(),
                 overwrite_detection,
-            ));
+            );
+            job.total_size = total_size;
+            job.conn_id = conn_id;
         }
         ipc::FS::CancelWrite { id } => {
             if let Some(job) = fs::get_job(id, write_jobs) {
                 job.remove_download_file();
+                tx_log.map(|tx: &UnboundedSender<String>| {
+                    tx.send(serialize_transfer_job(job, false, true, ""))
+                });
                 fs::remove_job(id, write_jobs);
             }
         }
@@ -753,11 +791,13 @@ async fn handle_fs(fs: ipc::FS, write_jobs: &mut Vec<fs::TransferJob>, tx: &Unbo
             if let Some(job) = fs::get_job(id, write_jobs) {
                 job.modify_time();
                 send_raw(fs::new_done(id, file_num), tx);
+                tx_log.map(|tx| tx.send(serialize_transfer_job(job, true, false, "")));
                 fs::remove_job(id, write_jobs);
             }
         }
         ipc::FS::WriteError { id, file_num, err } => {
             if let Some(job) = fs::get_job(id, write_jobs) {
+                tx_log.map(|tx| tx.send(serialize_transfer_job(job, false, false, &err)));
                 send_raw(fs::new_error(job.id(), err, file_num), tx);
                 fs::remove_job(job.id(), write_jobs);
             }

@@ -19,12 +19,13 @@ use cpal::{
 };
 use crossbeam_queue::ArrayQueue;
 use futures::{stream::SplitSink, SinkExt, StreamExt};
-use tokio_tungstenite::{tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 use ringbuf::{ring_buffer::RbBase, Rb};
 use sha2::{Digest, Sha256};
+use tokio_tungstenite::{tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use uuid::Uuid;
+use std::fs;
 
 pub use file_trait::FileManager;
 #[cfg(not(feature = "flutter"))]
@@ -35,7 +36,8 @@ use hbb_common::{
     anyhow::{anyhow, Context},
     bail,
     config::{Config, PeerConfig, PeerInfoSerde, Resolution, CONNECT_TIMEOUT, RENDEZVOUS_TIMEOUT},
-    get_version_number, log,
+    get_version_number,
+    log,
     message_proto::{option_message::BoolOption, *},
     protobuf::Message as _,
     rand,
@@ -46,8 +48,9 @@ use hbb_common::{
     timeout,
     tokio::time::Duration,
     tokio::{self, net::TcpStream},
-    //AddrMangle, 
-    ResultType, Stream,
+    //AddrMangle,
+    ResultType,
+    Stream,
 };
 pub use helper::*;
 use scrap::{
@@ -56,7 +59,10 @@ use scrap::{
     ImageFormat, ImageRgb,
 };
 
-use crate::is_keyboard_mode_supported;
+use crate::{
+    common::input::{MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP},
+    is_keyboard_mode_supported,
+};
 
 #[cfg(not(feature = "flutter"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -91,6 +97,7 @@ pub const LOGIN_MSG_PASSWORD_EMPTY: &str = "Empty Password";
 pub const LOGIN_MSG_PASSWORD_WRONG: &str = "Wrong Password";
 pub const LOGIN_MSG_NO_PASSWORD_ACCESS: &str = "No Password Access";
 pub const LOGIN_MSG_OFFLINE: &str = "Offline";
+pub const LOGIN_SCREEN_WAYLAND: &str = "Wayland login screen is not supported";
 #[cfg(target_os = "linux")]
 pub const SCRAP_UBUNTU_HIGHER_REQUIRED: &str = "Wayland requires Ubuntu 21.04 or higher version.";
 #[cfg(target_os = "linux")]
@@ -322,8 +329,8 @@ impl Client {
     /// Start a new connection.
     async fn _start(
         peer_id: &str,
-//        key: &str,
-//        token: &str,
+        //        key: &str,
+        //        token: &str,
         conn_type: ConnType,
     ) -> ResultType<(
         Stream,
@@ -359,14 +366,21 @@ impl Client {
         _conn_type: ConnType,
     ) -> ResultType<(FramedStream, Option<Arc<impl webrtc_util::Conn>>, bool)> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let sender = Arc::new(tokio::sync::Mutex::new(sender));
 
         {
             let tx = tx.clone();
             let peer_id = peer_id.to_owned();
             let peer = peer.clone();
+            let sender = sender.clone();
             tokio::spawn(async move {
                 match Self::connect_directly(&peer_id, &peer).await {
                     Ok(stream) => {
+                        {
+                            let mut sender = sender.lock().await;
+                            let _ = sender.close().await; // close to prevent delay
+                        }
+
                         match tx.send(Ok((stream, None, true))).await {
                             Ok(()) => {}
                             Err(e) => log::info!("Error while connecting to TURN server {e}"),
@@ -389,7 +403,8 @@ impl Client {
             let peer_id = peer_id.to_owned();
             let peer = peer.clone();
             tokio::spawn(async move {
-                match Self::connect_over_turn(&peer_id, sender, peer.peer_public_addr).await {
+                match Self::connect_over_turn(&peer_id, sender.clone(), peer.peer_public_addr).await
+                {
                     Ok((stream, relay)) => {
                         tx.send(Ok((stream, Some(relay), true)))
                             .await
@@ -512,7 +527,7 @@ impl Client {
 
     async fn connect_over_turn(
         peer_id: &str,
-        sender: WsSender,
+        sender: Arc<tokio::sync::Mutex<WsSender>>,
         peer_public_addr: SocketAddr,
     ) -> ResultType<(FramedStream, Arc<impl webrtc_util::Conn>)> {
         let start = std::time::Instant::now();
@@ -624,7 +639,7 @@ impl Client {
                                 });
                                 timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
                                 conn.set_key(key);
-								security_numbers =
+                                security_numbers =
                                     hbb_common::password_security::compute_security_code(
                                         &out_sk_b,
                                         &their_pk_b,
@@ -1060,7 +1075,7 @@ pub struct LoginConfigHandler {
     hash: Hash,
     password: Vec<u8>, // remember password for reconnect
     tokenex: String,
-	pub remember: bool,
+    pub remember: bool,
     config: PeerConfig,
     pub port_forward: (String, i32),
     pub version: i64,
@@ -1069,7 +1084,10 @@ pub struct LoginConfigHandler {
     pub supported_encoding: SupportedEncoding,
     pub restarting_remote_device: bool,
     pub force_relay: bool,
+    pub direct: Option<bool>,
+    pub received: bool,
     switch_uuid: Option<String>,
+    pub save_ab_password_to_recent: bool, // true: connected with ab password
     pub success_time: Option<hbb_common::tokio::time::Instant>,
     pub direct_error_counter: usize,
 }
@@ -1105,11 +1123,11 @@ impl LoginConfigHandler {
         conn_type: ConnType,
         switch_uuid: Option<String>,
         force_relay: bool,
-		tokenex: String,
+        tokenex: String,
     ) {
         self.id = id;
         self.conn_type = conn_type;
-		self.tokenex = tokenex;
+        self.tokenex = tokenex;
         let config = self.load_config();
         self.remember = !config.password.is_empty();
         self.config = config;
@@ -1121,17 +1139,17 @@ impl LoginConfigHandler {
         self.success_time = None;
         self.direct_error_counter = 0;
     }
-/*
-    // XXX: fix conflicts between with config that introduces by Deref.
-    pub fn set_reconnect_password(&mut self, password: Vec<u8>) {
-        self.password = password
-    }
+    /*
+        // XXX: fix conflicts between with config that introduces by Deref.
+        pub fn set_reconnect_password(&mut self, password: Vec<u8>) {
+            self.password = password
+        }
 
-    // XXX: fix conflicts between with config that introduces by Deref.
-    pub fn get_reconnect_password(&self) -> Vec<u8> {
-        return self.password.clone();
-    }
-*/
+        // XXX: fix conflicts between with config that introduces by Deref.
+        pub fn get_reconnect_password(&self) -> Vec<u8> {
+            return self.password.clone();
+        }
+    */
     pub fn should_auto_login(&self) -> String {
         let l = self.lock_after_session_end.v;
         let a = !self.get_option("auto-login").is_empty();
@@ -1171,7 +1189,7 @@ impl LoginConfigHandler {
     }
 
     //to-do: too many dup code below.
-    
+
     /// Save view style to the current config.
     ///
     /// # Arguments
@@ -1194,6 +1212,17 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
+    /// Save reverse mouse wheel ("", "Y") to the current config.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The reverse mouse wheel ("", "Y").
+    pub fn save_reverse_mouse_wheel(&mut self, value: String) {
+        let mut config = self.load_config();
+        config.reverse_mouse_wheel = value;
+        self.save_config(config);
+    }
+
     /// Save scroll style to the current config.
     ///
     /// # Arguments
@@ -1213,7 +1242,11 @@ impl LoginConfigHandler {
     /// * `v` - value of option
     pub fn save_ui_flutter(&mut self, k: String, v: String) {
         let mut config = self.load_config();
-        config.ui_flutter.insert(k, v);
+        if v.is_empty() {
+            config.ui_flutter.remove(&k);
+        } else {
+            config.ui_flutter.insert(k, v);
+        }
         self.save_config(config);
     }
 
@@ -1603,7 +1636,7 @@ impl LoginConfigHandler {
         }
         self.save_config(config);
     }
-    
+
     pub fn handle_login_error(&mut self, err: &str, interface: &impl Interface) -> bool {
         if err == "Wrong Password" {
             self.password = Default::default();
@@ -1671,7 +1704,7 @@ impl LoginConfigHandler {
         config.info = serde;
         let password = self.password.clone();
         let password0 = config.password.clone();
-		
+
         let remember = self.remember;
         if remember {
             if !password.is_empty() && password != password0 {
@@ -1701,7 +1734,7 @@ impl LoginConfigHandler {
         //self.conn_id = pi.conn_id;
         // no matter if change, for update file time
         self.save_config(config);
-		self.supported_encoding = pi.encoding.clone().unwrap_or_default();
+        self.supported_encoding = pi.encoding.clone().unwrap_or_default();
     }
 
     pub fn get_remote_dir(&self) -> String {
@@ -1734,23 +1767,28 @@ impl LoginConfigHandler {
         let my_id = Config::get_id_or(crate::common::DEVICE_ID.lock().unwrap().clone());
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let my_id = Config::get_id();
-		let avatar = Config::get_option("avatar");
-		//let mut tokenex = "NOTOKEN".to_string();
+        let avatar = Config::get_option("avatar");
+        let mut tokenex = "".to_string();
 
-		#[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let tokenex = std::fs::read_to_string(Config::path("LastToken.toml")).unwrap_or_else(|err| {
-                eprintln!("Error reading file: {}", err);
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        if fs::metadata(Config::path("LastToken.toml")).is_ok() {
+			tokenex = std::fs::read_to_string(Config::path("LastToken.toml")).unwrap_or_else(|err| {
+                log::error!(
+                    "Error reading file: {:?}({})",
+                    Config::path("LastToken.toml").to_str(),
+                    err
+                );
                 String::new()
             });
+		}
 
-		#[cfg(any(target_os = "android", target_os = "ios"))]
-		let tokenex = "".to_string();
-		
-		
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let tokenex = "".to_string();
+
         let mut lr = LoginRequest {
             username: self.id.clone(),
             password: password.into(),
-			tokenex: tokenex,
+            tokenex: tokenex,
             my_id,
             my_name: crate::username(),
             option: self.get_option_message(true).into(),
@@ -1762,10 +1800,10 @@ impl LoginConfigHandler {
                 ..Default::default()
             })
             .into(),
-			avatar_image: avatar,
+            avatar_image: avatar,
             ..Default::default()
         };
-		match self.conn_type {
+        match self.conn_type {
             ConnType::FILE_TRANSFER => lr.set_file_transfer(FileTransfer {
                 dir: self.get_remote_dir(),
                 show_hidden: !self.get_option("remote_show_hidden").is_empty(),
@@ -2065,19 +2103,30 @@ pub fn send_pointer_device_event(
     interface.send(Data::Message(msg_out));
 }
 
-
 /// Activate OS by sending mouse movement.
 ///
 /// # Arguments
 ///
 /// * `interface` - The interface for sending data.
-fn activate_os(interface: &impl Interface) {
+/// * `send_left_click` - Whether to send a click event.
+fn activate_os(interface: &impl Interface, send_left_click: bool) {
+    let left_down = MOUSE_BUTTON_LEFT << 3 | MOUSE_TYPE_DOWN;
+    let left_up = MOUSE_BUTTON_LEFT << 3 | MOUSE_TYPE_UP;
+    let right_down = MOUSE_BUTTON_RIGHT << 3 | MOUSE_TYPE_DOWN;
+    let right_up = MOUSE_BUTTON_RIGHT << 3 | MOUSE_TYPE_UP;
+    send_mouse(left_up, 0, 0, false, false, false, false, interface);
+    std::thread::sleep(Duration::from_millis(50));
     send_mouse(0, 0, 0, false, false, false, false, interface);
     std::thread::sleep(Duration::from_millis(50));
     send_mouse(0, 3, 3, false, false, false, false, interface);
+    let (click_down, click_up) = if send_left_click {
+        (left_down, left_up)
+    } else {
+        (right_down, right_up)
+    };
     std::thread::sleep(Duration::from_millis(50));
-    send_mouse(1 | 1 << 3, 0, 0, false, false, false, false, interface);
-    send_mouse(2 | 1 << 3, 0, 0, false, false, false, false, interface);
+    send_mouse(click_down, 0, 0, false, false, false, false, interface);
+    send_mouse(click_up, 0, 0, false, false, false, false, interface);
     /*
     let mut key_event = KeyEvent::new();
     // do not use Esc, which has problem with Linux
@@ -2110,9 +2159,13 @@ pub fn input_os_password(p: String, activate: bool, interface: impl Interface) {
 /// * `avtivate` - Whether to activate OS.
 /// * `interface` - The interface for sending data.
 fn _input_os_password(p: String, activate: bool, interface: impl Interface) {
+    let input_password = !p.is_empty();
     if activate {
-        activate_os(&interface);
+        activate_os(&interface, input_password);
         std::thread::sleep(Duration::from_millis(1200));
+    }
+    if !input_password {
+        return;
     }
     let mut key_event = KeyEvent::new();
     key_event.press = true;
@@ -2332,13 +2385,13 @@ pub async fn handle_login_from_ui(
         }
         password2
     } else {
-	    let mut hasher = Sha256::new();
-	    hasher.update(password);
-	    hasher.update(&lc.read().unwrap().hash.salt);
-	    let res = hasher.finalize();
-	    lc.write().unwrap().remember = remember;
-	    //lc.write().unwrap().set_reconnect_password(res[..].into());
-	    lc.write().unwrap().password = res[..].into();
+        let mut hasher = Sha256::new();
+        hasher.update(password);
+        hasher.update(&lc.read().unwrap().hash.salt);
+        let res = hasher.finalize();
+        lc.write().unwrap().remember = remember;
+        //lc.write().unwrap().set_reconnect_password(res[..].into());
+        lc.write().unwrap().password = res[..].into();
         res[..].into()
     };
     let mut hasher2 = Sha256::new();
@@ -2396,6 +2449,42 @@ pub trait Interface: Send + Clone + 'static + Sized {
     fn get_login_config_handler(&self) -> Arc<RwLock<LoginConfigHandler>>;
 
     fn swap_modifier_mouse(&self, _msg: &mut hbb_common::protos::message::MouseEvent) {}
+    fn update_direct(&self, direct: Option<bool>) {
+        self.get_login_config_handler().write().unwrap().direct = direct;
+    }
+
+    fn update_received(&self, received: bool) {
+        self.get_login_config_handler().write().unwrap().received = received;
+    }
+
+    fn on_establish_connection_error(&self, err: String) {
+        log::error!("Connection closed: {}", err);
+        let title = "Connection Error";
+        let text = err.to_string();
+        let lc = self.get_login_config_handler();
+        let direct = lc.read().unwrap().direct;
+        let received = lc.read().unwrap().received;
+        let relay_condition = direct == Some(true) && !received;
+
+        // force relay
+        let errno = errno::errno().0;
+        if relay_condition
+            && (cfg!(windows) && (errno == 10054 || err.contains("10054"))
+                || !cfg!(windows) && (errno == 104 || err.contains("104")))
+        {
+            lc.write().unwrap().force_relay = true;
+            lc.write()
+                .unwrap()
+                .set_option("force-always-relay".to_owned(), "Y".to_owned());
+        }
+
+        // relay-hint
+        if cfg!(feature = "flutter") && relay_condition {
+            self.msgbox("relay-hint", title, &text, "");
+        } else {
+            self.msgbox("error", title, &text, "");
+        }
+    }
 }
 
 /// Data used by the client interface.
@@ -2570,7 +2659,8 @@ lazy_static::lazy_static! {
 pub fn check_if_retry(msgtype: &str, title: &str, text: &str) -> bool {
     msgtype == "error"
         && title == "Connection Error"
-        && (text.contains("10054") || text.contains("104")
+        && (text.contains("10054")
+            || text.contains("104")
             || (!text.to_lowercase().contains("offline")
                 && !text.to_lowercase().contains("exist")
                 && !text.to_lowercase().contains("handshake")
@@ -2614,5 +2704,3 @@ fn decode_id_pk(signed: &[u8], key: &sign::PublicKey) -> ResultType<(String, [u8
         bail!("Wrong public length");
     }
 }
-
-

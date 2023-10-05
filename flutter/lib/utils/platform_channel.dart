@@ -16,10 +16,6 @@ class RdPlatformChannel {
 
   final MethodChannel _osxMethodChannel =
       MethodChannel("org.hoptodesk.hoptodesk/macos");
-  final MethodChannel _winMethodChannel =
-      MethodChannel("org.hoptodesk.hoptodesk/windows");
-  final MethodChannel _linuxMethodChannel =
-      MethodChannel("org.hoptodesk.hoptodesk/linux");
 
   /// Change the theme of the system window
   Future<void> changeSystemWindowTheme(SystemWindowTheme theme) {

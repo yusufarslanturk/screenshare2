@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:auto_size_text_field/auto_size_text_field.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/formatter/id_formatter.dart';
 import 'package:get/get.dart';
@@ -38,6 +39,7 @@ class ConnectionPage extends StatefulWidget implements PageShape {
 class _ConnectionPageState extends State<ConnectionPage> {
   /// Controller for the id input bar.
   final _idController = IDTextEditingController();
+  final RxBool _idEmpty = true.obs;
 
   /// Update url. If it's not null, means an update is available.
   var _updateUrl = '';
@@ -61,6 +63,10 @@ class _ConnectionPageState extends State<ConnectionPage> {
         if (_updateUrl.isNotEmpty) setState(() {});
       });
     }
+
+    _idController.addListener(() {
+      _idEmpty.value = _idController.text.isEmpty;
+    });
   }
 
   @override
@@ -127,7 +133,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.only(left: 16, right: 16),
-                  child: TextField(
+                  child: AutoSizeTextField(
+                    minFontSize: 18,
                     autocorrect: false,
                     enableSuggestions: false,
                     keyboardType: TextInputType.visiblePassword,

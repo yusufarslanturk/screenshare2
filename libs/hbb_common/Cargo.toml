@@ -27,7 +27,6 @@ serde = "1.0"
 lazy_static = "1.4"
 confy = { git = "https://github.com/open-trade/confy" }
 dirs-next = "2.0"
-dirs = "3.0.2"
 filetime = "0.2"
 sodiumoxide = "0.2"
 regex = "1.8"

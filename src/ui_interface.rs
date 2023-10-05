@@ -37,6 +37,13 @@ pub struct UiStatus {
     pub id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LoginDeviceInfo {
+    pub os: String,
+    pub r#type: String,
+    pub name: String,
+}
+
 lazy_static::lazy_static! {
     static ref CHILDREN : Children = Default::default();
     static ref UI_STATUS : Arc<Mutex<UiStatus>> = Arc::new(Mutex::new(UiStatus{
@@ -164,14 +171,14 @@ pub fn set_local_option(key: String, value: String) {
 
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
-pub fn get_local_flutter_config(key: String) -> String {
-    LocalConfig::get_flutter_config(&key)
+pub fn get_local_flutter_option(key: String) -> String {
+    LocalConfig::get_flutter_option(&key)
 }
 
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
-pub fn set_local_flutter_config(key: String, value: String) {
-    LocalConfig::set_flutter_config(key, value);
+pub fn set_local_flutter_option(key: String, value: String) {
+    LocalConfig::set_flutter_option(key, value);
 }
 
 #[cfg(feature = "flutter")]
@@ -202,6 +209,25 @@ pub fn forget_password(id: String) {
 pub fn get_peer_option(id: String, name: String) -> String {
     let c = PeerConfig::load(&id);
     c.options.get(&name).unwrap_or(&"".to_owned()).to_owned()
+}
+
+#[inline]
+#[cfg(feature = "flutter")]
+pub fn get_peer_flutter_option(id: String, name: String) -> String {
+    let c = PeerConfig::load(&id);
+    c.ui_flutter.get(&name).unwrap_or(&"".to_owned()).to_owned()
+}
+
+#[inline]
+#[cfg(feature = "flutter")]
+pub fn set_peer_flutter_option(id: String, name: String, value: String) {
+    let mut c = PeerConfig::load(&id);
+    if value.is_empty() {
+        c.ui_flutter.remove(&name);
+    } else {
+        c.ui_flutter.insert(name, value);
+    }
+    c.store(&id);
 }
 
 #[inline]
@@ -239,7 +265,7 @@ pub fn get_options() -> String {
     for (k, v) in options.iter() {
         m.insert(k.into(), v.to_owned().into());
     }
-    serde_json::to_string(&m).unwrap()
+    serde_json::to_string(&m).unwrap_or_default()
 }
 
 #[inline]
@@ -663,6 +689,7 @@ pub fn discover() {
 
 #[cfg(feature = "flutter")]
 pub fn peer_to_map(id: String, p: PeerConfig) -> HashMap<&'static str, String> {
+    use hbb_common::sodiumoxide::base64;
     HashMap::<&str, String>::from_iter([
         ("id", id),
         ("username", p.info.username.clone()),
@@ -672,7 +699,16 @@ pub fn peer_to_map(id: String, p: PeerConfig) -> HashMap<&'static str, String> {
             "alias",
             p.options.get("alias").unwrap_or(&"".to_owned()).to_owned(),
         ),
+        (
+            "hash",
+            base64::encode(p.password, base64::Variant::Original),
+        ),
     ])
+}
+
+#[cfg(feature = "flutter")]
+pub fn peer_exists(id: &str) -> bool {
+    PeerConfig::exists(id)
 }
 
 #[inline]
@@ -972,11 +1008,22 @@ pub fn get_fingerprint() -> String {
     return ipc::get_fingerprint();
 }
 
-pub fn get_hostname() -> String {
-    crate::common::hostname()
+#[inline]
+pub fn get_login_device_info() -> LoginDeviceInfo {
+    LoginDeviceInfo {
+        // std::env::consts::OS is better than whoami::platform() here.
+        os: std::env::consts::OS.to_owned(),
+        r#type: "client".to_owned(),
+        name: crate::common::hostname(),
+    }
 }
 
-// notice: avoiding create ipc connecton repeatly,
+#[inline]
+pub fn get_login_device_info_json() -> String {
+    serde_json::to_string(&get_login_device_info()).unwrap_or("{}".to_string())
+}
+
+// notice: avoiding create ipc connection repeatedly,
 // because windows named pipe has serious memory leak issue.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
@@ -1113,8 +1160,8 @@ pub(crate) async fn send_close_to_cm() {
 }
 */
 
-const INVALID_FORMAT: &'static str = "Invalid format";
-const UNKNOWN_ERROR: &'static str = "Unknown error";
+//const INVALID_FORMAT: &'static str = "Invalid format";
+//const UNKNOWN_ERROR: &'static str = "Unknown error";
 
 #[inline]
 #[tokio::main(flavor = "current_thread")]

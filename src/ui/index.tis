@@ -708,9 +708,9 @@ class InstallMe: Reactor.Component {
 
 class EmptyMe: Reactor.Component {
     function render() {
-        return <div .install-me style="background-color: #ECF4FF; position: absolute; margin-top: -5px; font-family: 'opensans-semb';height:10%">
+        return <div .install-me style="min-width: 170px; background-color: #ECF4FF; position: absolute; margin-top: -5px; font-family: 'opensans-semb';height:10%">
             <span />
-            <div style="font-size: 30px; color: #2D81D4; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; font-weight: 800;">HopToDesk</div>
+            <div style="font-size: 30px; color: #2D81D4; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; font-weight: 800;"><center>HopToDesk</center></div>
             <div></div>
         </div>;
     }

@@ -49,10 +49,17 @@ enum MouseFocusScope {
 }
 
 class FileManagerPage extends StatefulWidget {
-  const FileManagerPage({Key? key, required this.id, this.forceRelay})
+  const FileManagerPage(
+      {Key? key,
+      required this.id,
+      required this.password,
+      required this.tabController,
+      this.forceRelay})
       : super(key: key);
   final String id;
+  final String? password;
   final bool? forceRelay;
+  final DesktopTabController tabController;
 
   @override
   State<StatefulWidget> createState() => _FileManagerPageState();
@@ -73,8 +80,11 @@ class _FileManagerPageState extends State<FileManagerPage>
   @override
   void initState() {
     super.initState();
-    _ffi = FFI();
-    _ffi.start(widget.id, isFileTransfer: true, forceRelay: widget.forceRelay);
+    _ffi = FFI(null);
+    _ffi.start(widget.id,
+        isFileTransfer: true,
+        password: widget.password,
+        forceRelay: widget.forceRelay);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ffi.dialogManager
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
@@ -85,6 +95,7 @@ class _FileManagerPageState extends State<FileManagerPage>
     }
     debugPrint("File manager page init success with id ${widget.id}");
     _ffi.dialogManager.setOverlayState(_overlayKeyState);
+    widget.tabController.onSelected?.call(widget.id);
   }
 
   @override
@@ -353,15 +364,20 @@ class _FileManagerViewState extends State<FileManagerView> {
   final _breadCrumbScroller = ScrollController();
   final _keyboardNode = FocusNode();
   final _listSearchBuffer = TimeoutStringBuffer();
-  final _nameColWidth = kDesktopFileTransferNameColWidth.obs;
-  final _modifiedColWidth = kDesktopFileTransferModifiedColWidth.obs;
+  final _nameColWidth = 0.0.obs;
+  final _modifiedColWidth = 0.0.obs;
+  final _sizeColWidth = 0.0.obs;
   final _fileListScrollController = ScrollController();
+  final _globalHeaderKey = GlobalKey();
 
   /// [_lastClickTime], [_lastClickEntry] help to handle double click
   var _lastClickTime =
       DateTime.now().millisecondsSinceEpoch - bind.getDoubleClickTime() - 1000;
   Entry? _lastClickEntry;
 
+  double? _windowWidthPrev;
+  double _fileTransferMinimumWidth = 0.0;
+  
   FileController get controller => widget.controller;
   bool get isLocal => widget.controller.isLocal;
   FFI get _ffi => widget._ffi;
@@ -418,6 +434,27 @@ class _FileManagerViewState extends State<FileManagerView> {
     );
   }
 
+  void _handleColumnPorportions() {
+    final windowWidthNow = MediaQuery.of(context).size.width;
+    if (_windowWidthPrev == null) {
+      _windowWidthPrev = windowWidthNow;
+      final defaultColumnWidth = windowWidthNow * 0.115;
+      _fileTransferMinimumWidth = defaultColumnWidth / 3;
+      _nameColWidth.value = defaultColumnWidth;
+      _modifiedColWidth.value = defaultColumnWidth;
+      _sizeColWidth.value = defaultColumnWidth;
+    }
+
+    if (_windowWidthPrev != windowWidthNow) {
+      final difference = windowWidthNow / _windowWidthPrev!;
+      _windowWidthPrev = windowWidthNow;
+      _fileTransferMinimumWidth *= difference;
+      _nameColWidth.value *= difference;
+      _modifiedColWidth.value *= difference;
+      _sizeColWidth.value *= difference;
+    }
+  }
+
   void onLocationFocusChanged() {
     debugPrint("focus changed on local");
     if (_locationNode.hasFocus) {
@@ -449,7 +486,8 @@ class _FileManagerViewState extends State<FileManagerView> {
                           padding: EdgeInsets.all(8.0),
                           child: FutureBuilder<String>(
                               future: bind.sessionGetPlatform(
-                                  id: _ffi.id, isRemote: !isLocal),
+                                  sessionId: _ffi.sessionId,
+                                  isRemote: !isLocal),
                               builder: (context, snapshot) {
                                 if (snapshot.hasData &&
                                     snapshot.data!.isNotEmpty) {
@@ -635,7 +673,7 @@ class _FileManagerViewState extends State<FileManagerView> {
                     MenuButton(
                       onPressed: () {
                         final name = TextEditingController();
-                        _ffi.dialogManager.show((setState, close) {
+                        _ffi.dialogManager.show((setState, close, context) {
                           submit() {
                             if (name.value.text.isNotEmpty) {
                               controller.createDir(PathUtil.join(
@@ -1131,9 +1169,21 @@ class _FileManagerViewState extends State<FileManagerView> {
     return false;
   }
 
+  void _onDrag(double dx, RxDouble column1, RxDouble column2) {
+    if (column1.value + dx <= _fileTransferMinimumWidth ||
+        column2.value - dx <= _fileTransferMinimumWidth) {
+      return;
+    }
+    column1.value += dx;
+    column2.value -= dx;
+    column1.value = max(_fileTransferMinimumWidth, column1.value);
+    column2.value = max(_fileTransferMinimumWidth, column2.value);
+  }
+
   Widget _buildFileBrowserHeader(BuildContext context) {
     final padding = EdgeInsets.all(1.0);
     return SizedBox(
+      key: _globalHeaderKey,
       height: kDesktopFileTransferHeaderHeight,
       child: Row(
         children: [
@@ -1143,11 +1193,8 @@ class _FileManagerViewState extends State<FileManagerView> {
           ),
           DraggableDivider(
             axis: Axis.vertical,
-            onPointerMove: (dx) {
-              _nameColWidth.value += dx;
-              _nameColWidth.value = min(kDesktopFileTransferMaximumWidth,
-                  max(kDesktopFileTransferMinimumWidth, _nameColWidth.value));
-            },
+            onPointerMove: (dx) =>
+                _onDrag(dx, _nameColWidth, _modifiedColWidth),
             padding: padding,
           ),
           Obx(
@@ -1156,15 +1203,12 @@ class _FileManagerViewState extends State<FileManagerView> {
           ),
           DraggableDivider(
               axis: Axis.vertical,
-              onPointerMove: (dx) {
-                _modifiedColWidth.value += dx;
-                _modifiedColWidth.value = min(
-                    kDesktopFileTransferMaximumWidth,
-                    max(kDesktopFileTransferMinimumWidth,
-                        _modifiedColWidth.value));
-              },
+              onPointerMove: (dx) =>
+                  _onDrag(dx, _modifiedColWidth, _sizeColWidth),
               padding: padding),
-          Expanded(child: headerItemFunc(null, SortBy.size, translate("Size")))
+          Expanded(
+              child: headerItemFunc(
+                  _sizeColWidth.value, SortBy.size, translate("Size")))
         ],
       ),
     );
@@ -1189,23 +1233,20 @@ class _FileManagerViewState extends State<FileManagerView> {
                 height: kDesktopFileTransferHeaderHeight,
                 child: Row(
                   children: [
-                    Flexible(
-                      flex: 2,
+                    Expanded(
                       child: Text(
                         name,
                         style: headerTextStyle,
                         overflow: TextOverflow.ellipsis,
-                      ).marginSymmetric(horizontal: 4),
+                      ).marginOnly(left: 4),
                     ),
-                    Flexible(
-                        flex: 1,
-                        child: ascending.value != null
-                            ? Icon(
-                                ascending.value!
-                                    ? Icons.keyboard_arrow_up_rounded
-                                    : Icons.keyboard_arrow_down_rounded,
-                              )
-                            : const Offstage())
+                    ascending.value != null
+                        ? Icon(
+                            ascending.value!
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                          )
+                        : SizedBox()
                   ],
                 ),
               ),

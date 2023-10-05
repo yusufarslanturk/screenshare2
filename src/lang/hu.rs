@@ -40,7 +40,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Stop service", "Szolgáltatás leállítása"),
         ("Change ID", "Azonosító megváltoztatása"),
         ("Website", "Weboldal"),
-        ("About", "Rólunk"),
+        ("About", "A névjegye"),
         ("Slogan_tip", ""),
         ("Privacy Statement", ""),
         ("Mute", "Némítás"),
@@ -455,7 +455,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("2FA QR code", "Code QR 2FA"),
         ("Scan this QR code with a camera on a secondary device such as a phone to set it up as your 2FA authenticator.", "Olvassa be ezt a QR-kódot egy másodlagos eszköz (például telefon) kamerájával, és állítsa be 2FA-hitelesítőként."),
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Az asztalhoz való csatlakozáskor meg kell erősítenie a 2FA-t a másodlagos eszközön."),		
-		("Choose Network", "Válassza a Hálózat lehetőséget"),
-		("Unattended Access", "Zárja be a jelszót"),						
+		("Choose Network", "Hálózat kiválasztása"),
+		("Unattended Access", "Jelszó megtartása"),						
     ].iter().cloned().collect();
 }

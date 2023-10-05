@@ -1,6 +1,7 @@
 use serde_json::{json, value::Value};
 use std::ops::Deref;
 
+mod ar;
 mod ca;
 mod cn;
 mod cs;
@@ -18,6 +19,8 @@ mod it;
 mod ja;
 mod ko;
 mod kz;
+mod lt;
+mod lv;
 mod nl;
 mod pl;
 mod ptbr;
@@ -33,7 +36,6 @@ mod tr;
 mod tw;
 mod ua;
 mod vn;
-mod lt;
 mod bg;
 
 
@@ -55,6 +57,7 @@ lazy_static::lazy_static! {
             ("sv", "Svenska"),
             ("pl", "Polski"),
             ("lt", "Lietuvių"),
+    		("lv", "Latviešu"),            
             ("sr", "Srpski"),
             ("sq", "Shqip"),
             ("sk", "Slovenčina"),
@@ -141,6 +144,8 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "ro" => ro::T.deref(),
         "bg" => bg::T.deref(),        
         "lt" => lt::T.deref(),
+		"lv" => lv::T.deref(),
+        "ar" => ar::T.deref(),
         _ => en::T.deref(),
     };
     if let Some(v) = m.get(&name as &str) {

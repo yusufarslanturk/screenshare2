@@ -393,14 +393,7 @@ pub async fn start_server(is_server: bool) {
         log::info!("XAUTHORITY={:?}", std::env::var("XAUTHORITY"));
     }
     #[cfg(feature = "hwcodec")]
-    {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            scrap::hwcodec::check_config_process();
-        })
-    }
-
+    scrap::hwcodec::check_config_process();
     if is_server {
         crate::common::set_server_running(true);
         std::thread::spawn(move || {
@@ -419,6 +412,8 @@ pub async fn start_server(is_server: bool) {
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         tokio::spawn(async { sync_and_watch_config_dir().await });
+        #[cfg(target_os = "windows")]
+        crate::platform::try_kill_broker();
         crate::RendezvousMediator::start_all().await;
     } else {
         match crate::ipc::connect(1000, "").await {

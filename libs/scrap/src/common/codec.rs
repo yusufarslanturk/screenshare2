@@ -44,6 +44,7 @@ pub struct HwEncoderConfig {
     pub width: usize,
     pub height: usize,
     pub quality: Quality,
+    pub keyframe_interval: Option<usize>,
 }
 
 #[derive(Debug, Clone)]

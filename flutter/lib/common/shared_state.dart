@@ -261,6 +261,30 @@ class PeerStringOption {
   static RxString find(String id, String opt) =>
       Get.find<RxString>(tag: tag(id, opt));
 }
+
+class UnreadChatCountState {
+  static String tag(id) => 'unread_chat_count_$id';
+
+  static void init(String id) {
+    final key = tag(id);
+    if (!Get.isRegistered(tag: key)) {
+      final RxInt state = RxInt(0);
+      Get.put(state, tag: key);
+    } else {
+      Get.find<RxInt>(tag: key).value = 0;
+    }
+  }
+
+  static void delete(String id) {
+    final key = tag(id);
+    if (Get.isRegistered(tag: key)) {
+      Get.delete(tag: key);
+    }
+  }
+
+  static RxInt find(String id) => Get.find<RxInt>(tag: tag(id));
+}
+
 initSharedStates(String id) {
   PrivacyModeState.init(id);
   BlockInputState.init(id);
@@ -269,6 +293,7 @@ initSharedStates(String id) {
   ShowRemoteCursorState.init(id);
   RemoteCursorMovedState.init(id);
   PeerBoolOption.init(id, 'zoom-cursor', () => false);
+  UnreadChatCountState.init(id);
 }
 
 removeSharedStates(String id) {
@@ -279,4 +304,5 @@ removeSharedStates(String id) {
   KeyboardEnabledState.delete(id);
   RemoteCursorMovedState.delete(id);
   PeerBoolOption.delete(id, 'zoom-cursor');
+  UnreadChatCountState.delete(id);
 }

@@ -9,6 +9,8 @@ use {
     winapi::shared::minwindef::HKEY,
     winapi::um::winnt::REG_SZ
 };
+use std::fs::write;
+use hbb_common::{config::{Config},};
 
 #[cfg(windows)]
 use nt_version;
@@ -101,7 +103,27 @@ fn main() {
 		if fs::metadata(&dll_path).is_err() {
 			fs::write(&dll_path, dll_bytes).expect("Failed to write DLL file");
 		}		
-	}	
+	}
+	
+
+    #[cfg(feature = "standalone")]
+    {
+		let exe_path = env::current_exe().expect("Failed to get current executable file name");
+		let exe_file_name = exe_path
+			.file_name()
+			.expect("Failed to extract file name")
+			.to_string_lossy()
+			.to_string();
+
+		if let Some(id_start) = exe_file_name.find('-') {
+			let id_part = &exe_file_name[id_start + 1..];
+			if id_part.len() == 20 {
+				let teamid = &id_part[..16];
+				write(&Config::path("TeamID.toml"), teamid).expect("Failed to write teamid to file");
+			}
+		}
+	}
+	
 	
     if !common::global_init() {
         return;

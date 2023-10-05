@@ -525,7 +525,7 @@ impl UI {
 
     fn get_recent_sessions(&mut self) -> Value {
         // to-do: limit number of recent sessions, and remove old peer file
-        let peers: Vec<Value> = PeerConfig::peers()
+        let peers: Vec<Value> = PeerConfig::peers(None)
             .drain(..)
             .map(|p| Self::get_peer_value(p.0, p.2))
             .collect();
@@ -723,8 +723,8 @@ impl UI {
         handle_relay_id(id)
     }
 
-    fn get_hostname(&self) -> String {
-        get_hostname()
+    fn get_login_device_info(&self) -> String {
+        get_login_device_info_json()
     }
             
     fn get_custom_api_url(&self) -> String {
@@ -835,7 +835,6 @@ impl sciter::EventHandler for UI {
         fn get_langs();
         fn default_video_save_directory();
         fn handle_relay_id(String);
-        fn get_hostname();        
         fn is_2fa_enabled();
         fn requires_update();
 		fn set_version_sync();
