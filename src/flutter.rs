@@ -39,6 +39,7 @@ pub(crate) const APP_TYPE_CM: &str = "main";
 pub(crate) const APP_TYPE_DESKTOP_REMOTE: &str = "remote";
 pub(crate) const APP_TYPE_DESKTOP_FILE_TRANSFER: &str = "file transfer";
 pub(crate) const APP_TYPE_DESKTOP_PORT_FORWARD: &str = "port forward";
+pub type FlutterSession = Arc<Session<FlutterHandler>>;
 
 lazy_static::lazy_static! {
     pub(crate) static ref CUR_SESSION_ID: RwLock<SessionID> = Default::default();
@@ -285,7 +286,7 @@ impl FlutterHandler {
         )
     }
 
-    pub(crate) fn close_event_stream(&mut self) {
+    pub(crate) fn close_event_stream(&self) {
         let mut stream_lock = self.event_stream.write().unwrap();
         if let Some(stream) = &*stream_lock {
             stream.add(EventToUI::Event("close".to_owned()));
@@ -335,13 +336,13 @@ impl FlutterHandler {
 
     #[inline]
     #[cfg(feature = "flutter_texture_render")]
-    pub fn register_texture(&mut self, ptr: usize) {
+    pub fn register_texture(&self, ptr: usize) {
         *self.renderer.read().unwrap().ptr.write().unwrap() = ptr;
     }
 
     #[inline]
     #[cfg(feature = "flutter_texture_render")]
-    pub fn set_size(&mut self, width: usize, height: usize) {
+    pub fn set_size(&self, width: usize, height: usize) {
         *self.notify_rendered.write().unwrap() = false;
         self.renderer.write().unwrap().set_size(width, height);
     }
@@ -800,11 +801,16 @@ pub fn session_start_(
         );
         #[cfg(not(feature = "flutter_texture_render"))]
         log::info!("Session {} start, render by flutter paint widget", id);
+        let is_pre_added = session.event_stream.read().unwrap().is_some();
+        session.close_event_stream();
         *session.event_stream.write().unwrap() = Some(event_stream);
-        let session = session.clone();
-        std::thread::spawn(move || {
-            io_loop(session);
-        });
+        if !is_pre_added {
+            let session = (*session).clone();
+            std::thread::spawn(move || {
+                //let round = session.connection_round_state.lock().unwrap().new_round();
+                io_loop(session);
+            });
+        }
         Ok(())
     } else {
         bail!("No session with peer id {}", id)
@@ -819,18 +825,6 @@ pub fn update_text_clipboard_required() {
         .iter()
         .any(|(_id, session)| session.is_text_clipboard_required());
     Client::set_is_text_clipboard_required(is_required);
-}
-
-#[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn other_sessions_running(session_id: &SessionID) -> bool {
-    SESSIONS
-        .read()
-        .unwrap()
-        .keys()
-        .filter(|k| *k != session_id)
-        .count()
-        != 0
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1076,6 +1070,7 @@ pub fn session_register_texture(_session_id: SessionID, _ptr: usize) {
     #[cfg(feature = "flutter_texture_render")]
     if let Some(session) = SESSIONS.write().unwrap().get_mut(&_session_id) {
         return session.register_texture(_ptr);
+        return;
     }
 }
 
@@ -1211,3 +1206,4 @@ pub fn session_send_pointer(session_id: SessionID, msg: String) {
 pub enum SessionHook {
     OnSessionRgba(fn(String, &mut scrap::ImageRgb)),
 }
+

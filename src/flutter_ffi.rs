@@ -734,6 +734,11 @@ pub fn main_store_fav(favs: Vec<String>) {
     store_fav(favs)
 }
 
+pub fn main_get_peer_sync(id: String) -> SyncReturn<String> {
+    let conf = get_peer(id);
+    SyncReturn(serde_json::to_string(&conf).unwrap_or("".to_string()))
+}
+
 pub fn main_get_peer(id: String) -> String {
     let conf = get_peer(id);
     serde_json::to_string(&conf).unwrap_or("".to_string())
@@ -830,11 +835,6 @@ pub fn main_set_peer_option_sync(id: String, key: String, value: String) -> Sync
 }
 
 pub fn main_set_peer_alias(id: String, alias: String) {
-    main_broadcast_message(&HashMap::from([
-        ("name", "alias"),
-        ("id", &id),
-        ("alias", &alias),
-    ]));
     set_peer_option(id, "alias".to_owned(), alias)
 }
 
@@ -1362,7 +1362,7 @@ pub fn main_get_mouse_time() -> f64 {
 pub fn main_wol(id: String) {
     // TODO: move send_wol outside.
     #[cfg(not(any(target_os = "ios")))]
-     crate::lan::send_wol(id)
+    crate::lan::send_wol(id)
 }
 
 pub fn main_create_shortcut(_id: String) {

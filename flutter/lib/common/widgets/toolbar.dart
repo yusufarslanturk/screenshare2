@@ -49,7 +49,8 @@ class TToggleMenu {
 handleOsPasswordEditIcon(
     SessionID sessionId, OverlayDialogManager dialogManager) {
   isEditOsPassword = true;
-  showSetOSPassword(sessionId, false, dialogManager, null, () => isEditOsPassword = false);
+  showSetOSPassword(
+      sessionId, false, dialogManager, null, () => isEditOsPassword = false);
 }
 
 handleOsPasswordAction(
@@ -62,7 +63,8 @@ handleOsPasswordAction(
       await bind.sessionGetOption(sessionId: sessionId, arg: 'os-password') ??
           '';
   if (password.isEmpty) {
-    showSetOSPassword(sessionId, true, dialogManager, password, () => isEditOsPassword = false);
+    showSetOSPassword(sessionId, true, dialogManager, password,
+        () => isEditOsPassword = false);
   } else {
     bind.sessionInputOsPassword(sessionId: sessionId, value: password);
   }

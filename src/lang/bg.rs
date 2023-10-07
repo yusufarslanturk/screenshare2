@@ -46,7 +46,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("id_change_tip", "Допускат се само символи a-z, A-Z, 0-9 и _ (подчертаване). Първо трябва да е буква a-z, A-Z. Дължина от 6 до 16."),
         ("Website", "Сайт"),
         ("About", "За програмата"),
-        ("Slogan_tip", "Направен с душа в този безумен свят!"),
+        ("Slogan_tip", "!"),
         ("Privacy Statement", "Декларация за поверителност"),
         ("Mute", "Спрете звука"),
         ("Build Date", "Дата на създаване"),

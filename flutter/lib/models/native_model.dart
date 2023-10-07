@@ -199,7 +199,7 @@ class PlatformFFI {
     version = await getVersion();
   }
 
-  Future<bool> _tryHandle(Map<String, dynamic> evt) async {
+  Future<bool> tryHandle(Map<String, dynamic> evt) async {
     final name = evt['name'];
     if (name != null) {
       final handlers = _eventHandlers[name];
@@ -223,7 +223,7 @@ class PlatformFFI {
         try {
           Map<String, dynamic> event = json.decode(message);
           // _tryHandle here may be more flexible than _eventCallback
-          if (!await _tryHandle(event)) {
+          if (!await tryHandle(event)) {
             if (_eventCallback != null) {
               await _eventCallback!(event);
             }

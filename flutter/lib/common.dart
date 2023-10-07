@@ -142,10 +142,10 @@ class ColorThemeExtension extends ThemeExtension<ColorThemeExtension> {
     Color? errorBannerBg,
     Color? me,
   }) {
-      return ColorThemeExtension(
-        border: border ?? this.border,
-        border2: border2 ?? this.border2,
-        highlight: highlight ?? this.highlight,
+    return ColorThemeExtension(
+      border: border ?? this.border,
+      border2: border2 ?? this.border2,
+      highlight: highlight ?? this.highlight,
       drag_indicator: drag_indicator ?? this.drag_indicator,
       shadow: shadow ?? this.shadow,
       errorBannerBg: errorBannerBg ?? this.errorBannerBg,
@@ -632,6 +632,7 @@ class OverlayDialogManager {
   int _tagCount = 0;
 
   OverlayEntry? _mobileActionsOverlayEntry;
+  RxBool mobileActionsOverlayVisible = false.obs;
 
   void setOverlayState(OverlayKeyState overlayKeyState) {
     _overlayKeyState = overlayKeyState;
@@ -795,12 +796,14 @@ class OverlayDialogManager {
     });
     overlayState.insert(overlay);
     _mobileActionsOverlayEntry = overlay;
+    mobileActionsOverlayVisible.value = true;
   }
 
   void hideMobileActionsOverlay() {
     if (_mobileActionsOverlayEntry != null) {
       _mobileActionsOverlayEntry!.remove();
       _mobileActionsOverlayEntry = null;
+      mobileActionsOverlayVisible.value = false;
       return;
     }
   }
@@ -910,12 +913,12 @@ class CustomAlertDialog extends StatelessWidget {
         return KeyEventResult.ignored;
       },
       child: AlertDialog(
-        scrollable: true,
-        title: title,
-        content: ConstrainedBox(
-          constraints: contentBoxConstraints,
-          child: content,
-        ),
+          scrollable: true,
+          title: title,
+          content: ConstrainedBox(
+            constraints: contentBoxConstraints,
+            child: content,
+          ),
           actions: actions,
           titlePadding: titlePadding ?? MyTheme.dialogTitlePadding(),
           contentPadding:
@@ -969,11 +972,22 @@ void msgBox(SessionID sessionId, String type, String title, String text,
         }));
   }
   if (reconnect != null && title == "Connection Error") {
-    buttons.insert(
-        0,
-        dialogButton('Reconnect', isOutline: true, onPressed: () {
-          reconnect(dialogManager, sessionId, false);
-        }));
+    // `enabled` is used to disable the dialog button once the button is clicked.
+    final enabled = true.obs;
+    final button = Obx(
+      () => dialogButton(
+        'Reconnect',
+        isOutline: true,
+        onPressed: enabled.isTrue
+            ? () {
+                // Disable the button
+                enabled.value = false;
+                reconnect(dialogManager, sessionId, false);
+              }
+            : null,
+      ),
+    );
+    buttons.insert(0, button);
   }
   if (link.isNotEmpty) {
     buttons.insert(0, dialogButton('JumpLink', onPressed: jumplink));
@@ -1092,6 +1106,45 @@ Color str2color(String str, [alpha = 0xFF]) {
   return Color((hash & 0xFF7FFF) | (alpha << 24));
 }
 
+Color str2color2(String str, {List<int> existing = const []}) {
+  Map<String, Color> colorMap = {
+    "red": Colors.red,
+    "green": Colors.green,
+    "blue": Colors.blue,
+    "orange": Colors.orange,
+    "purple": Colors.purple,
+    "grey": Colors.grey,
+    "cyan": Colors.cyan,
+    "lime": Colors.lime,
+    "teal": Colors.teal,
+    "pink": Colors.pink[200]!,
+    "indigo": Colors.indigo,
+    "brown": Colors.brown,
+  };
+  final color = colorMap[str.toLowerCase()];
+  if (color != null) {
+    return color.withAlpha(0xFF);
+  }
+  if (str.toLowerCase() == 'yellow') {
+    return Colors.yellow.withAlpha(0xFF);
+  }
+  var hash = 0;
+  for (var i = 0; i < str.length; i++) {
+    hash += str.codeUnitAt(i);
+  }
+  List<Color> colorList = colorMap.values.toList();
+  hash = hash % colorList.length;
+  var result = colorList[hash].withAlpha(0xFF);
+  if (existing.contains(result.value)) {
+    Color? notUsed =
+        colorList.firstWhereOrNull((e) => !existing.contains(e.value));
+    if (notUsed != null) {
+      result = notUsed;
+    }
+  }
+  return result;
+}
+
 const K = 1024;
 const M = K * K;
 const G = M * K;
@@ -1108,10 +1161,6 @@ String readableFileSize(double size) {
   }
 }
 
-/// Flutter can't not catch PointerMoveEvent when size is 1
-/// This will happen in Android AccessibilityService Input
-/// android can't init dispatching size yet ,see: https://stackoverflow.com/questions/59960451/android-accessibility-dispatchgesture-is-it-possible-to-specify-pressure-for-a
-/// use this temporary solution until flutter or android fixes the bug
 class AccessibilityListener extends StatelessWidget {
   final Widget? child;
   static final offset = 100;
@@ -1217,6 +1266,7 @@ class AndroidPermissionManager {
   }
 }
 
+
 RadioListTile<T> getRadio<T>(
     Widget title, T toValue, T curValue, ValueChanged<T?>? onChange,
     {EdgeInsetsGeometry? contentPadding, bool? dense}) {
@@ -1266,7 +1316,7 @@ bool option2bool(String option, String value) {
       option == "stop-service" ||
       option == "direct-server" ||
       option == "stop-rendezvous-service" ||
-      option == "force-always-relay") {
+      option == kOptionForceAlwaysRelay) {
     res = value == "Y";
   } else {
     assert(false);
@@ -1283,7 +1333,7 @@ String bool2option(String option, bool b) {
       option == "stop-service" ||
       option == "direct-server" ||
       option == "stop-rendezvous-service" ||
-      option == "force-always-relay") {
+      option == kOptionForceAlwaysRelay) {
     res = b ? 'Y' : '';
   } else {
     assert(false);
@@ -1732,10 +1782,10 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
   }
 
   final sub = uriLinkStream.listen((Uri? uri) {
-    debugPrint("A uri was received: $uri.");
+    debugPrint("A uri was received: $uri. handleByFlutter $handleByFlutter");
     if (uri != null) {
       if (handleByFlutter) {
-        callUniLinksUriHandler(uri);
+        handleUriLink(uri: uri);
       } else {
         bind.sendUrlScheme(url: uri.toString());
       }
@@ -1748,88 +1798,166 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
   return sub;
 }
 
-/// Handle command line arguments
-///
-/// * Returns true if we successfully handle the startup arguments.
-bool checkArguments() {
-  if (kBootArgs.isNotEmpty) {
-    final ret = parseRustdeskUri(kBootArgs.first);
-    if (ret) {
-      return true;
-    }
-  }
-  // bootArgs:[--connect, 362587269, --switch_uuid, e3d531cc-5dce-41e0-bd06-5d4a2b1eec05]
-  // check connect args
-  var connectIndex = kBootArgs.indexOf("--connect");
-  if (connectIndex == -1) {
-    return false;
-  }
-  String? id =
-      kBootArgs.length <= connectIndex + 1 ? null : kBootArgs[connectIndex + 1];
-  String? password =
-      kBootArgs.length <= connectIndex + 2 ? null : kBootArgs[connectIndex + 2];
-  if (password != null && password.startsWith("--")) {
-    password = null;
-  }
-  final switchUuidIndex = kBootArgs.indexOf("--switch_uuid");
-  String? switchUuid = kBootArgs.length <= switchUuidIndex + 1
-      ? null
-      : kBootArgs[switchUuidIndex + 1];
-  if (id != null) {
-    if (id.startsWith(kUniLinksPrefix)) {
-      return parseRustdeskUri(id);
-    } else {
-      // remove "--connect xxx" in the `bootArgs` array
-      kBootArgs.removeAt(connectIndex);
-      kBootArgs.removeAt(connectIndex);
-      // fallback to peer id
-      Future.delayed(Duration.zero, () {
-        rustDeskWinManager.newRemoteDesktop(id,
-            password: password, switch_uuid: switchUuid);
-      });
-      return true;
-    }
-  }
-  return false;
+enum UriLinkType {
+  remoteDesktop,
+  fileTransfer,
+  portForward,
+  rdp,
 }
 
-/// Parse `rustdesk://` unilinks
-///
-/// Returns true if we successfully handle the uri provided.
-/// [Functions]
-/// 1. New Connection: rustdesk://connection/new/your_peer_id
-bool parseRustdeskUri(String uriPath) {
-  final uri = Uri.tryParse(uriPath);
-  if (uri == null) {
-    debugPrint("uri is not valid: $uriPath");
+// uri link handler
+bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
+  List<String>? args;
+  if (cmdArgs != null) {
+    args = cmdArgs;
+    // rustdesk <uri link>
+    if (args.isNotEmpty && args[0].startsWith(kUniLinksPrefix)) {
+      final uri = Uri.tryParse(args[0]);
+      if (uri != null) {
+        args = urlLinkToCmdArgs(uri);
+      }
+    }
+  } else if (uri != null) {
+    args = urlLinkToCmdArgs(uri);
+  } else if (uriString != null) {
+    final uri = Uri.tryParse(uriString);
+    if (uri != null) {
+      args = urlLinkToCmdArgs(uri);
+    }
+  }
+  if (args == null) {
     return false;
   }
-  return callUniLinksUriHandler(uri);
-}
 
-/// uri handler
-///
-/// Returns true if we successfully handle the uri provided.
-bool callUniLinksUriHandler(Uri uri) {
-  debugPrint("uni links called: $uri");
-  // new connection
-  if (uri.authority == "connection" && uri.path.startsWith("/new/")) {
-    final peerId = uri.path.substring("/new/".length);
-    var param = uri.queryParameters;
-    String? switch_uuid = param["switch_uuid"];
-    Future.delayed(Duration.zero, () {
-      rustDeskWinManager.newRemoteDesktop(peerId, switch_uuid: switch_uuid);
-    });
+  if (args.isEmpty) {
+    windowOnTop(null);
     return true;
   }
+
+  UriLinkType? type;
+  String? id;
+  String? password;
+  String? switchUuid;
+  bool? forceRelay;
+  for (int i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--connect':
+      case '--play':
+        type = UriLinkType.remoteDesktop;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--file-transfer':
+        type = UriLinkType.fileTransfer;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--port-forward':
+        type = UriLinkType.portForward;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--rdp':
+        type = UriLinkType.rdp;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--password':
+        password = args[i + 1];
+        i++;
+        break;
+      case '--switch_uuid':
+        switchUuid = args[i + 1];
+        i++;
+        break;
+      case '--relay':
+        forceRelay = true;
+        break;
+      default:
+        break;
+    }
+  }
+  if (type != null && id != null) {
+    switch (type) {
+      case UriLinkType.remoteDesktop:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newRemoteDesktop(id!,
+              password: password,
+              switchUuid: switchUuid,
+              forceRelay: forceRelay);
+        });
+        break;
+      case UriLinkType.fileTransfer:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newFileTransfer(id!,
+              password: password, forceRelay: forceRelay);
+        });
+        break;
+      case UriLinkType.portForward:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newPortForward(id!, false,
+              password: password, forceRelay: forceRelay);
+        });
+        break;
+      case UriLinkType.rdp:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newPortForward(id!, true,
+              password: password, forceRelay: forceRelay);
+        });
+        break;
+    }
+
+    return true;
+  }
+
   return false;
 }
 
-connectMainDesktop(String id,
-    {required bool isFileTransfer,
-    required bool isTcpTunneling,
-    required bool isRDP,
-    bool? forceRelay}) async {
+List<String>? urlLinkToCmdArgs(Uri uri) {
+  String? command;
+  String? id;
+  if (uri.authority.isEmpty &&
+      uri.path.split('').every((char) => char == '/')) {
+    return [];
+  } else if (uri.authority == "connection" && uri.path.startsWith("/new/")) {
+    // For compatibility
+    command = '--connect';
+    id = uri.path.substring("/new/".length);
+  } else if (['connect', "play", 'file-transfer', 'port-forward', 'rdp']
+      .contains(uri.authority)) {
+    command = '--${uri.authority}';
+    if (uri.path.length > 1) {
+      id = uri.path.substring(1);
+    }
+  } else if (uri.authority.length > 2 && uri.path.length <= 1) {
+    // rustdesk://<connect-id>
+    command = '--connect';
+    id = uri.authority;
+  }
+
+  List<String> args = List.empty(growable: true);
+  if (command != null && id != null) {
+    args.add(command);
+    args.add(id);
+    var param = uri.queryParameters;
+    String? password = param["password"];
+    if (password != null) args.addAll(['--password', password]);
+    String? switch_uuid = param["switch_uuid"];
+    if (switch_uuid != null) args.addAll(['--switch_uuid', switch_uuid]);
+    if (param["relay"] != null) args.add("--relay");
+    return args;
+  }
+
+  return null;
+}
+
+connectMainDesktop(
+  String id, {
+  required bool isFileTransfer,
+  required bool isTcpTunneling,
+  required bool isRDP,
+  bool? forceRelay,
+}) async {
   if (isFileTransfer) {
     await rustDeskWinManager.newFileTransfer(id, forceRelay: forceRelay);
   } else if (isTcpTunneling || isRDP) {
@@ -1843,11 +1971,22 @@ connectMainDesktop(String id,
 /// If [isFileTransfer], starts a session only for file transfer.
 /// If [isTcpTunneling], starts a session only for tcp tunneling.
 /// If [isRDP], starts a session only for rdp.
-connect(BuildContext context, String id,
-    {bool isFileTransfer = false,
-    bool isTcpTunneling = false,
-    bool isRDP = false}) async {
+connect(
+  BuildContext context,
+  String id, {
+  bool isFileTransfer = false,
+  bool isTcpTunneling = false,
+  bool isRDP = false,
+}) async {
   if (id == '') return;
+  if (!isDesktop || desktopType == DesktopType.main) {
+    try {
+      if (Get.isRegistered<IDTextEditingController>()) {
+        final idController = Get.find<IDTextEditingController>();
+        idController.text = formatID(id);
+      }
+    } catch (_) {}
+  }
   id = id.replaceAll(' ', '');
   final oldId = id;
   id = await bind.mainHandleRelayId(id: id);
@@ -1857,18 +1996,20 @@ connect(BuildContext context, String id,
 
   if (isDesktop) {
     if (desktopType == DesktopType.main) {
-      await connectMainDesktop(id,
+      await connectMainDesktop(
+        id,
         isFileTransfer: isFileTransfer,
         isTcpTunneling: isTcpTunneling,
-          isRDP: isRDP,
-          forceRelay: forceRelay);
+        isRDP: isRDP,
+        forceRelay: forceRelay,
+      );
     } else {
       await rustDeskWinManager.call(WindowType.Main, kWindowConnect, {
         'id': id,
         'isFileTransfer': isFileTransfer,
         'isTcpTunneling': isTcpTunneling,
         'isRDP': isRDP,
-        "forceRelay": forceRelay,
+        'forceRelay': forceRelay,
       });
     }
   } else {

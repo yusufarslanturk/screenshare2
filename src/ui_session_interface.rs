@@ -1,4 +1,7 @@
 use crate::input::{MOUSE_BUTTON_LEFT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP, MOUSE_TYPE_WHEEL};
+use async_trait::async_trait;
+use bytes::Bytes;
+use rdev::{Event, EventType::*, KeyCode};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 use std::{
@@ -11,9 +14,6 @@ use std::{
     time::SystemTime,
 };
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use rdev::{Event, EventType::*, KeyCode};
 use uuid::Uuid;
 
 #[cfg(not(feature = "flutter"))]
@@ -63,6 +63,7 @@ pub struct Session<T: InvokeUiSession> {
     pub server_file_transfer_enabled: Arc<RwLock<bool>>,
     pub server_clipboard_enabled: Arc<RwLock<bool>>,
     pub last_change_display: Arc<Mutex<ChangeDisplayRecord>>,
+    pub connection_round_state: Arc<Mutex<ConnectionRoundState>>,
 }
 
 #[derive(Clone)]
@@ -78,6 +79,55 @@ pub struct ChangeDisplayRecord {
     display: i32,
     width: i32,
     height: i32,
+}
+
+enum ConnectionState {
+    Connecting,
+    Connected,
+    Disconnected,
+}
+
+/// ConnectionRoundState is used to control the reconnecting logic.
+pub struct ConnectionRoundState {
+    round: u32,
+    state: ConnectionState,
+}
+impl ConnectionRoundState {
+    pub fn new_round(&mut self) -> u32 {
+        self.round += 1;
+        self.state = ConnectionState::Connecting;
+        self.round
+    }
+
+    pub fn set_connected(&mut self) {
+        self.state = ConnectionState::Connected;
+    }
+
+    pub fn is_round_gt(&self, round: u32) -> bool {
+        if round == u32::MAX && self.round == 0 {
+            true
+        } else {
+            round < self.round
+        }
+    }
+
+    pub fn set_disconnected(&mut self, round: u32) -> bool {
+        if self.is_round_gt(round) {
+            false
+        } else {
+            self.state = ConnectionState::Disconnected;
+            true
+        }
+    }
+}
+
+impl Default for ConnectionRoundState {
+    fn default() -> Self {
+        Self {
+            round: 0,
+            state: ConnectionState::Connecting,
+        }
+    }
 }
 
 impl Default for ChangeDisplayRecord {
