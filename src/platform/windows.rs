@@ -1710,29 +1710,6 @@ pub fn is_elevated(process_id: Option<DWORD>) -> ResultType<bool> {
     }
 }
 
-#[inline]
-fn filter_foreground_window(process_id: DWORD) -> ResultType<bool> {
-    if let Ok(output) = std::process::Command::new("tasklist")
-        .args(vec![
-            "/SVC",
-            "/NH",
-            "/FI",
-            &format!("PID eq {}", process_id),
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    {
-        let s = String::from_utf8_lossy(&output.stdout)
-            .to_string()
-            .to_lowercase();
-        Ok(["Taskmgr", "mmc", "regedit"]
-            .iter()
-            .any(|name| s.contains(&name.to_string().to_lowercase())))
-    } else {
-        bail!("run tasklist failed");
-    }
-}
-
 pub fn is_foreground_window_elevated() -> ResultType<bool> {
     unsafe {
         let mut process_id: DWORD = 0;
@@ -1740,12 +1717,7 @@ pub fn is_foreground_window_elevated() -> ResultType<bool> {
         if process_id == 0 {
             bail!("Failed to get processId, errno {}", GetLastError())
         }
-        let elevated = is_elevated(Some(process_id))?;
-        if elevated {
-            filter_foreground_window(process_id)
-        } else {
-            Ok(false)
-        }
+        is_elevated(Some(process_id))
     }
 }
 
@@ -1845,7 +1817,7 @@ pub fn create_process_with_logon(user: &str, pwd: &str, exe: &str, arg: &str) ->
         {
             let last_error = GetLastError();
             bail!(
-                "CreateProcessWithLogonW failed : \"{}\", errno={}", 
+                "CreateProcessWithLogonW failed : \"{}\", errno={}",
                 last_error_table
                     .get(&last_error)
                     .unwrap_or(&"Unknown error"),
@@ -2395,11 +2367,11 @@ fn run_after_run_cmds(silent: bool) {
 
 #[inline]
 pub fn try_kill_broker() {
-    allow_err!(run_cmds(
-        format!("taskkill /F /IM {}", WIN_MAG_INJECTED_PROCESS_EXE),
-        false,
-        "kill_broker"
-    ));
+    allow_err!(std::process::Command::new("cmd")
+        .arg("/c")
+        .arg(&format!("taskkill /F /IM {}", WIN_MAG_INJECTED_PROCESS_EXE))
+        .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
+        .spawn());
 }
 
 #[cfg(test)]
