@@ -105,7 +105,7 @@ impl RendezvousMediator {
             Some(addr) => addr,
             None => bail!("Failed to retreive public IP address"),
         };
-
+		
         let (local_ip, host, websocket_client) = create_websocket(&host_list).await?;
 
         let (mut sender, receiver) = websocket_client.split();
@@ -256,7 +256,7 @@ impl RendezvousMediator {
 							last_data_received = chrono::Utc::now();
                             if let Ok(stream) = socket_client::connect_tcp(
                                 relay_connection.addr,
-                                Config::get_any_listen_addr(true),
+                                //Config::get_any_listen_addr(true),
                                 CONNECT_TIMEOUT,
                             ).await
                             {

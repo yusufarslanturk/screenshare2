@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/user_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/models/desktop_render_texture.dart';
 //import 'package:flutter_hbb/plugin/event.dart';
 //import 'package:flutter_hbb/plugin/manager.dart';
 //import 'package:flutter_hbb/plugin/widgets/desc_ui.dart';
@@ -86,7 +88,7 @@ class CachedPeerData {
 class FfiModel with ChangeNotifier {
   CachedPeerData cachedPeerData = CachedPeerData();
   PeerInfo _pi = PeerInfo();
-  Display _display = Display();
+  Rect? _rect;
 
   var _inputBlocked = false;
   final _permissions = <String, bool>{};
@@ -102,9 +104,16 @@ class FfiModel with ChangeNotifier {
   RxBool waitForImageDialogShow = true.obs;
   Timer? waitForImageTimer;
   RxBool waitForFirstImage = true.obs;
-  Map<String, bool> get permissions => _permissions;
 
-  Display get display => _display;
+  Rect? get rect => _rect;
+  bool get isOriginalResolutionSet =>
+      _pi.tryGetDisplayIfNotAllDisplay()?.isOriginalResolutionSet ?? false;
+  bool get isVirtualDisplayResolution =>
+      _pi.tryGetDisplayIfNotAllDisplay()?.isVirtualDisplayResolution ?? false;
+  bool get isOriginalResolution =>
+      _pi.tryGetDisplayIfNotAllDisplay()?.isOriginalResolution ?? false;
+
+  Map<String, bool> get permissions => _permissions;
 
   bool? get secure => _secure;
 
@@ -129,6 +138,24 @@ class FfiModel with ChangeNotifier {
     sessionId = parent.target!.sessionId;
   }
 
+  Rect? displaysRect() {
+    final displays = _pi.getCurDisplays();
+    if (displays.isEmpty) {
+      return null;
+    }
+    double l = displays[0].x;
+    double t = displays[0].y;
+    double r = displays[0].x + displays[0].width;
+    double b = displays[0].y + displays[0].height;
+    for (var display in displays.sublist(1)) {
+      l = min(l, display.x);
+      t = min(t, display.y);
+      r = max(r, display.x + display.width);
+      b = max(b, display.y + display.height);
+    }
+    return Rect.fromLTRB(l, t, r, b);
+  }
+  
   toggleTouchMode() {
     if (!isPeerAndroid) {
       _touchMode = !_touchMode;
@@ -153,7 +180,6 @@ class FfiModel with ChangeNotifier {
 
   clear() {
     _pi = PeerInfo();
-    _display = Display();
     _secure = null;
     _direct = null;
     _inputBlocked = false;
@@ -201,13 +227,15 @@ class FfiModel with ChangeNotifier {
     }, sessionId, peerId);
     updatePrivacyMode(data.updatePrivacyMode, sessionId, peerId);
     setConnectionType(peerId, data.secure, data.direct);
-    await handlePeerInfo(data.peerInfo, peerId);
+    await handlePeerInfo(data.peerInfo, peerId, true);
     for (final element in data.cursorDataList) {
       updateLastCursorId(element);
       await handleCursorData(element);
     }
-    updateLastCursorId(data.lastCursorId);
-    handleCursorId(data.lastCursorId);
+    if (data.lastCursorId.isNotEmpty) {
+      updateLastCursorId(data.lastCursorId);
+      handleCursorId(data.lastCursorId);
+    }
   }
   // todo: why called by two position
   StreamEventHandler startEventListener(SessionID sessionId, String peerId) {
@@ -216,13 +244,14 @@ class FfiModel with ChangeNotifier {
       if (name == 'msgbox') {
         handleMsgBox(evt, sessionId, peerId);
       } else if (name == 'peer_info') {
-        handlePeerInfo(evt, peerId);
+        handlePeerInfo(evt, peerId, false);
       } else if (name == 'sync_peer_info') {
-        handleSyncPeerInfo(evt, sessionId);
+        handleSyncPeerInfo(evt, sessionId, peerId);
       } else if (name == 'connection_ready') {
         setConnectionType(
             peerId, evt['secure'] == 'true', evt['direct'] == 'true');
       } else if (name == 'switch_display') {
+        // switch display is kept for backward compatibility
         handleSwitchDisplay(evt, sessionId, peerId);
       } else if (name == 'cursor_data') {
         updateLastCursorId(evt);
@@ -277,7 +306,7 @@ class FfiModel with ChangeNotifier {
         await bind.sessionSwitchSides(sessionId: sessionId);
         closeConnection(id: peer_id);
       } else if (name == 'portable_service_running') {
-        parent.target?.elevationModel.onPortableServiceRunning(evt);
+        _handlePortableServiceRunning(peerId, evt);
       //} else if (name == 'on_url_scheme_received') {
         // currently comes from "_url" ipc of mac and dbus of linux
         //onUrlSchemeReceived(evt);
@@ -307,6 +336,10 @@ class FfiModel with ChangeNotifier {
       //  handleReloading(evt);
       //} else if (name == 'plugin_option') {
       //  handleOption(evt);
+      } else if (name == "cm_file_transfer_log") {
+        if (isDesktop) {
+          gFFI.cmFileModel.onFileTransferLog(evt['log']);
+        }
       } else {
         debugPrint('Unknown event name: $name');
       }
@@ -337,20 +370,63 @@ class FfiModel with ChangeNotifier {
     platformFFI.setEventCallback(startEventListener(sessionId, peerId));
   }
 
-  _updateCurDisplay(SessionID sessionId, Display newDisplay) {
-    if (newDisplay != _display) {
-      if (newDisplay.x != _display.x || newDisplay.y != _display.y) {
-        parent.target?.cursorModel
-            .updateDisplayOrigin(newDisplay.x, newDisplay.y);
+  _handlePortableServiceRunning(String peerId, Map<String, dynamic> evt) {
+    final running = evt['running'] == 'true';
+    parent.target?.elevationModel.onPortableServiceRunning(running);
+    if (running) {
+      if (pi.primaryDisplay != kInvalidDisplayIndex) {
+        if (pi.currentDisplay != pi.primaryDisplay) {
+          // Notify to switch display
+          msgBox(sessionId, 'custom-nook-nocancel-hasclose-info', 'Prompt',
+              'elevated_switch_display_msg', '', parent.target!.dialogManager);
+          bind.sessionSwitchDisplay(
+              sessionId: sessionId,
+              value: Int32List.fromList([pi.primaryDisplay]));
+        }
       }
-      _display = newDisplay;
+    }
+  }
+
+  handleAliasChanged(Map<String, dynamic> evt) {
+    if (!isDesktop) return;
+    final String peerId = evt['id'];
+    final String alias = evt['alias'];
+    String label = getDesktopTabLabel(peerId, alias);
+    final rxTabLabel = PeerStringOption.find(evt['id'], 'tabLabel');
+    if (rxTabLabel.value != label) {
+      rxTabLabel.value = label;
+    }
+  }
+  
+  updateCurDisplay(SessionID sessionId) {
+    final newRect = displaysRect();
+    if (newRect == null) {
+      return;
+    }
+    if (newRect != _rect) {
+      if (newRect.left != _rect?.left || newRect.top != _rect?.top) {
+        parent.target?.cursorModel
+            .updateDisplayOrigin(newRect.left, newRect.top);
+      }
+      _rect = newRect;
+      parent.target?.canvasModel.updateViewStyle();
       _updateSessionWidthHeight(sessionId);
     }
   }
 
   handleSwitchDisplay(
       Map<String, dynamic> evt, SessionID sessionId, String peerId) {
-    _pi.currentDisplay = int.parse(evt['display']);
+    final curDisplay = int.parse(evt['display']);
+
+    if (_pi.currentDisplay != kAllDisplayValue) {
+      if (bind.peerGetDefaultSessionsCount(id: peerId) > 1) {
+        if (curDisplay != _pi.currentDisplay) {
+          return;
+        }
+      }
+      _pi.currentDisplay = curDisplay;
+    }
+
     var newDisplay = Display();
     newDisplay.x = double.tryParse(evt['x']) ?? newDisplay.x;
     newDisplay.y = double.tryParse(evt['y']) ?? newDisplay.y;
@@ -361,11 +437,11 @@ class FfiModel with ChangeNotifier {
         int.tryParse(evt['original_width']) ?? kInvalidResolutionValue;
     newDisplay.originalHeight =
         int.tryParse(evt['original_height']) ?? kInvalidResolutionValue;
+    _pi.displays[curDisplay] = newDisplay;
 
-    _updateCurDisplay(sessionId, newDisplay);
-
+    updateCurDisplay(sessionId);
     try {
-      CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
+      CurrentDisplayState.find(peerId).value = curDisplay;
     } catch (e) {
       //
     }
@@ -505,30 +581,56 @@ class FfiModel with ChangeNotifier {
   }
 
   _updateSessionWidthHeight(SessionID sessionId) {
-    parent.target?.canvasModel.updateViewStyle();
-    if (display.width <= 0 || display.height <= 0) {
+    if (_rect == null) return;
+    if (_rect!.width <= 0 || _rect!.height <= 0) {
       debugPrintStack(
-          label: 'invalid display size (${display.width},${display.height})');
+          label: 'invalid display size (${_rect!.width},${_rect!.height})');
     } else {
-      bind.sessionSetSize(
-          sessionId: sessionId, width: display.width, height: display.height);
+      final displays = _pi.getCurDisplays();
+      if (displays.length == 1) {
+        bind.sessionSetSize(
+          sessionId: sessionId,
+          display:
+              pi.currentDisplay == kAllDisplayValue ? 0 : pi.currentDisplay,
+          width: _rect!.width.toInt(),
+          height: _rect!.height.toInt(),
+        );
+      } else {
+        for (int i = 0; i < displays.length; ++i) {
+          bind.sessionSetSize(
+            sessionId: sessionId,
+            display: i,
+            width: displays[i].width.toInt(),
+            height: displays[i].height.toInt(),
+          );
+        }
+      }
     }
   }
 
   /// Handle the peer info event based on [evt].
-  handlePeerInfo(Map<String, dynamic> evt, String peerId) async {
+  handlePeerInfo(Map<String, dynamic> evt, String peerId, bool isCache) async {
     cachedPeerData.peerInfo = evt;
-    
+
     // recent peer updated by handle_peer_info(ui_session_interface.rs) --> handle_peer_info(client.rs) --> save_config(client.rs)
     bind.mainLoadRecentPeers();
 
     parent.target?.dialogManager.dismissAll();
     _pi.version = evt['version'];
+    _pi.isSupportMultiUiSession =
+        bind.isSupportMultiUiSession(version: _pi.version);
     _pi.username = evt['username'];
     _pi.hostname = evt['hostname'];
     _pi.platform = evt['platform'];
     _pi.sasEnabled = evt['sas_enabled'] == 'true';
-    _pi.currentDisplay = int.parse(evt['current_display']);
+    final currentDisplay = int.parse(evt['current_display']);
+    if (_pi.primaryDisplay == kInvalidDisplayIndex) {
+      _pi.primaryDisplay = currentDisplay;
+    }
+
+    if (bind.peerGetDefaultSessionsCount(id: peerId) <= 1) {
+      _pi.currentDisplay = currentDisplay;
+    }
 
     try {
       CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
@@ -554,10 +656,10 @@ class FfiModel with ChangeNotifier {
       for (int i = 0; i < displays.length; ++i) {
         _pi.displays.add(evtToDisplay(displays[i]));
       }
-      stateGlobal.displaysCount.value = _pi.displays.length;
+      _pi.displaysCount.value = _pi.displays.length;
       if (_pi.currentDisplay < _pi.displays.length) {
-        _display = _pi.displays[_pi.currentDisplay];
-        _updateSessionWidthHeight(sessionId);
+        // now replaced to _updateCurDisplay
+        updateCurDisplay(sessionId);
       }
       if (displays.isNotEmpty) {
         _reconnects = 1;
@@ -575,12 +677,12 @@ class FfiModel with ChangeNotifier {
               sessionId: sessionId, arg: 'view-only'));
     }
     if (connType == ConnType.defaultConn) {
-      final platform_additions = evt['platform_additions'];
-      if (platform_additions != null && platform_additions != '') {
+      final platformAdditions = evt['platform_additions'];
+      if (platformAdditions != null && platformAdditions != '') {
         try {
-          _pi.platform_additions = json.decode(platform_additions);
+          _pi.platformAdditions = json.decode(platformAdditions);
         } catch (e) {
-          debugPrint('Failed to decode platform_additions $e');
+          debugPrint('Failed to decode platformAdditions $e');
         }
       }
     }
@@ -589,6 +691,51 @@ class FfiModel with ChangeNotifier {
     stateGlobal.resetLastResolutionGroupValues(peerId);
 
     notifyListeners();
+
+    if (!isCache) {
+      tryUseAllMyDisplaysForTheRemoteSession(peerId);
+    }
+  }
+
+  tryUseAllMyDisplaysForTheRemoteSession(String peerId) async {
+    if (bind.sessionGetUseAllMyDisplaysForTheRemoteSession(
+            sessionId: sessionId) !=
+        'Y') {
+      return;
+    }
+
+    if (!_pi.isSupportMultiDisplay || _pi.displays.length <= 1) {
+      return;
+    }
+
+    final screenRectList = await getScreenRectList();
+    if (screenRectList.length <= 1) {
+      return;
+    }
+
+    // to-do: peer currentDisplay is the primary display, but the primary display may not be the first display.
+    // local primary display also may not be the first display.
+    //
+    // 0 is assumed to be the primary display here, for now.
+
+    // move to the first display and set fullscreen
+    bind.sessionSwitchDisplay(
+        sessionId: sessionId, value: Int32List.fromList([0]));
+    _pi.currentDisplay = 0;
+    try {
+      CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
+    } catch (e) {
+      //
+    }
+    await tryMoveToScreenAndSetFullscreen(screenRectList[0]);
+
+    final length = _pi.displays.length < screenRectList.length
+        ? _pi.displays.length
+        : screenRectList.length;
+    for (var i = 1; i < length; i++) {
+      openMonitorInNewTabOrWindow(i, peerId, _pi,
+          screenRect: screenRectList[i]);
+    }
   }
 
   tryShowAndroidActionsOverlay({int delayMSecs = 10}) {
@@ -655,7 +802,8 @@ class FfiModel with ChangeNotifier {
   }
 
   /// Handle the peer info synchronization event based on [evt].
-  handleSyncPeerInfo(Map<String, dynamic> evt, SessionID sessionId) async {
+  handleSyncPeerInfo(
+      Map<String, dynamic> evt, SessionID sessionId, String peerId) async {
     if (evt['displays'] != null) {
       cachedPeerData.peerInfo['displays'] = evt['displays'];
       List<dynamic> displays = json.decode(evt['displays']);
@@ -664,12 +812,54 @@ class FfiModel with ChangeNotifier {
         newDisplays.add(evtToDisplay(displays[i]));
       }
       _pi.displays = newDisplays;
-      stateGlobal.displaysCount.value = _pi.displays.length;
-      if (_pi.currentDisplay >= 0 && _pi.currentDisplay < _pi.displays.length) {
-        _updateCurDisplay(sessionId, _pi.displays[_pi.currentDisplay]);
+      _pi.displaysCount.value = _pi.displays.length;
+
+      if (_pi.currentDisplay == kAllDisplayValue) {
+        updateCurDisplay(sessionId);
+        // to-do: What if the displays are changed?
+      } else {
+        if (_pi.currentDisplay >= 0 &&
+            _pi.currentDisplay < _pi.displays.length) {
+          updateCurDisplay(sessionId);
+        } else {
+          if (_pi.displays.isNotEmpty) {
+            // Notify to switch display
+            msgBox(sessionId, 'custom-nook-nocancel-hasclose-info', 'Prompt',
+                'display_is_plugged_out_msg', '', parent.target!.dialogManager);
+            final newDisplay = pi.primaryDisplay == kInvalidDisplayIndex
+                ? 0
+                : pi.primaryDisplay;
+            final displays = newDisplay;
+            bind.sessionSwitchDisplay(
+                sessionId: sessionId, value: Int32List.fromList([displays]));
+
+            if (_pi.isSupportMultiUiSession) {
+              // If the peer supports multi-ui-session, no switch display message will be send back.
+              // We need to update the display manually.
+              switchToNewDisplay(newDisplay, sessionId, peerId);
+            }
+          } else {
+            msgBox(sessionId, 'nocancel-error', 'Prompt', 'No Displays', '',
+                parent.target!.dialogManager);
+          }
+        }
       }
     }
     notifyListeners();
+  }
+
+  // Directly switch to the new display without waiting for the response.
+  switchToNewDisplay(int display, SessionID sessionId, String peerId) {
+    // VideoHandler creation is upon when video frames are received, so either caching commands(don't know next width/height) or stopping recording when switching displays.
+    parent.target?.recordingModel.onClose();
+    // no need to wait for the response
+    pi.currentDisplay = display;
+    updateCurDisplay(sessionId);
+    try {
+      CurrentDisplayState.find(peerId).value = display;
+    } catch (e) {
+      //
+    }
   }
 
   updateBlockInputState(Map<String, dynamic> evt, String peerId) {
@@ -694,7 +884,7 @@ class FfiModel with ChangeNotifier {
   }
 
   void setViewOnly(String id, bool value) {
-    if (version_cmp(_pi.version, '1.2.0') < 0) return;
+    if (versionCmp(_pi.version, '1.40.5') < 0) return;
     // tmp fix for https://github.com/rustdesk/rustdesk/pull/3706#issuecomment-1481242389
     // because below rx not used in mobile version, so not initialized, below code will cause crash
     // current our flutter code quality is fucking shit now. !!!!!!!!!!!!!!!!
@@ -734,16 +924,16 @@ class ImageModel with ChangeNotifier {
 
   addCallbackOnFirstImage(Function(String) cb) => callbacksOnFirstImage.add(cb);
 
-  onRgba(Uint8List rgba) {
+  onRgba(int display, Uint8List rgba) {
     final pid = parent.target?.id;
     img.decodeImageFromPixels(
         rgba,
-        parent.target?.ffiModel.display.width ?? 0,
-        parent.target?.ffiModel.display.height ?? 0,
+        parent.target?.ffiModel.rect?.width.toInt() ?? 0,
+        parent.target?.ffiModel.rect?.height.toInt() ?? 0,
         isWeb ? ui.PixelFormat.rgba8888 : ui.PixelFormat.bgra8888,
         onPixelsCopied: () {
       // Unlock the rgba memory from rust codes.
-      platformFFI.nextRgba(sessionId);
+      platformFFI.nextRgba(sessionId, display);
     }).then((image) {
       if (parent.target?.id != pid) return;
       try {
@@ -1002,20 +1192,20 @@ class CanvasModel with ChangeNotifier {
   }
 
   bool get cursorEmbedded =>
-      parent.target?.ffiModel.display.cursorEmbedded ?? false;
+      parent.target?.ffiModel._pi.cursorEmbedded ?? false;
 
   int getDisplayWidth() {
     final defaultWidth = (isDesktop || isWebDesktop)
         ? kDesktopDefaultDisplayWidth
         : kMobileDefaultDisplayWidth;
-    return parent.target?.ffiModel.display.width ?? defaultWidth;
+    return parent.target?.ffiModel.rect?.width.toInt() ?? defaultWidth;
   }
 
   int getDisplayHeight() {
     final defaultHeight = (isDesktop || isWebDesktop)
         ? kDesktopDefaultDisplayHeight
         : kMobileDefaultDisplayHeight;
-    return parent.target?.ffiModel.display.height ?? defaultHeight;
+    return parent.target?.ffiModel.rect?.height.toInt() ?? defaultHeight;
   }
 
   static double get windowBorderWidth => stateGlobal.windowBorderWidth.value;
@@ -1603,7 +1793,27 @@ class QualityMonitorModel with ChangeNotifier {
   updateQualityStatus(Map<String, dynamic> evt) {
     try {
       if ((evt['speed'] as String).isNotEmpty) _data.speed = evt['speed'];
-      if ((evt['fps'] as String).isNotEmpty) _data.fps = evt['fps'];
+      if ((evt['fps'] as String).isNotEmpty) {
+        final fps = jsonDecode(evt['fps']) as Map<String, dynamic>;
+        final pi = parent.target?.ffiModel.pi;
+        if (pi != null) {
+          final currentDisplay = pi.currentDisplay;
+          if (currentDisplay != kAllDisplayValue) {
+            final fps2 = fps[currentDisplay.toString()];
+            if (fps2 != null) {
+              _data.fps = fps2.toString();
+            }
+          } else if (fps.isNotEmpty) {
+            final fpsList = [];
+            for (var i = 0; i < pi.displays.length; i++) {
+              fpsList.add((fps[i.toString()] ?? 0).toString());
+            }
+            _data.fps = fpsList.join(' ');
+          }
+        } else {
+          _data.fps = null;
+        }
+      }
       if ((evt['delay'] as String).isNotEmpty) _data.delay = evt['delay'];
       if ((evt['target_bitrate'] as String).isNotEmpty) {
         _data.targetBitrate = evt['target_bitrate'];
@@ -1630,31 +1840,66 @@ class RecordingModel with ChangeNotifier {
     int? width = parent.target?.canvasModel.getDisplayWidth();
     int? height = parent.target?.canvasModel.getDisplayHeight();
     if (sessionId == null || width == null || height == null) return;
+    final pi = parent.target?.ffiModel.pi;
+    if (pi == null) return;
+    final currentDisplay = pi.currentDisplay;
+    if (currentDisplay == kAllDisplayValue) return;
     bind.sessionRecordScreen(
-        sessionId: sessionId, start: true, width: width, height: height);
+        sessionId: sessionId,
+        start: true,
+        display: currentDisplay,
+        width: width,
+        height: height);
   }
 
-  toggle() {
+  toggle() async {
     if (isIOS) return;
     final sessionId = parent.target?.sessionId;
     if (sessionId == null) return;
+    final pi = parent.target?.ffiModel.pi;
+    if (pi == null) return;
+    final currentDisplay = pi.currentDisplay;
+    if (currentDisplay == kAllDisplayValue) return;
     _start = !_start;
     notifyListeners();
+    await _sendStatusMessage(sessionId, pi, _start);
     if (_start) {
-      bind.sessionRefresh(sessionId: sessionId);
+      sessionRefreshVideo(sessionId, pi);
+      if (versionCmp(pi.version, '1.2.4') >= 0) {
+        // will not receive SwitchDisplay since 1.2.4
+        onSwitchDisplay();
+      }
     } else {
       bind.sessionRecordScreen(
-          sessionId: sessionId, start: false, width: 0, height: 0);
+          sessionId: sessionId,
+          start: false,
+          display: currentDisplay,
+          width: 0,
+          height: 0);
     }
   }
 
-  onClose() {
+  onClose() async {
     if (isIOS) return;
     final sessionId = parent.target?.sessionId;
     if (sessionId == null) return;
+    if (!_start) return;
     _start = false;
+    final pi = parent.target?.ffiModel.pi;
+    if (pi == null) return;
+    final currentDisplay = pi.currentDisplay;
+    if (currentDisplay == kAllDisplayValue) return;
+    await _sendStatusMessage(sessionId, pi, false);
     bind.sessionRecordScreen(
-        sessionId: sessionId, start: false, width: 0, height: 0);
+        sessionId: sessionId,
+        start: false,
+        display: currentDisplay,
+        width: 0,
+        height: 0);
+  }
+
+  _sendStatusMessage(SessionID sessionId, PeerInfo pi, bool status) async {
+    await bind.sessionRecordStatus(sessionId: sessionId, status: status);
   }
 }
 
@@ -1669,9 +1914,7 @@ class ElevationModel with ChangeNotifier {
     _running = false;
   }
 
-  onPortableServiceRunning(Map<String, dynamic> evt) {
-    _running = evt['running'] == 'true';
-  }
+  onPortableServiceRunning(bool running) => _running = running;
 }
 
 enum ConnType { defaultConn, fileTransfer, portForward, rdp }
@@ -1734,14 +1977,18 @@ class FFI {
   }
 
   /// Start with the given [id]. Only transfer file if [isFileTransfer], only port forward if [isPortForward].
-  void start(String id,
-      {bool isFileTransfer = false,
-      bool isPortForward = false,
-      bool isRdp = false,
-      String? switchUuid,
-      String? password,
-      bool? forceRelay,
-      int? tabWindowId}) {
+  void start(
+    String id, {
+    bool isFileTransfer = false,
+    bool isPortForward = false,
+    bool isRdp = false,
+    String? switchUuid,
+    String? password,
+    bool? forceRelay,
+    int? tabWindowId,
+    int? display,
+    List<int>? displays,
+  }) {
     closed = false;
     auditNote = '';
     if (isMobile) mobileReset();
@@ -1771,10 +2018,32 @@ class FFI {
         forceRelay: forceRelay ?? false,
         password: password ?? '',
       );
+    } else if (display != null) {
+      if (displays == null) {
+        debugPrint(
+            'Unreachable, failed to add existed session to $id, the displays is null while display is $display');
+        return;
+      }
+      final addRes = bind.sessionAddExistedSync(id: id, sessionId: sessionId);
+      if (addRes != '') {
+        debugPrint(
+            'Unreachable, failed to add existed session to $id, $addRes');
+        return;
+      }
+      bind.sessionTryAddDisplay(
+          sessionId: sessionId, displays: Int32List.fromList(displays));
+      ffiModel.pi.currentDisplay = display;
     }
     final stream = bind.sessionStart(sessionId: sessionId, id: id);
     final cb = ffiModel.startEventListener(sessionId, id);
-    final useTextureRender = bind.mainUseTextureRender();
+
+    // Force refresh displays.
+    // The controlled side may not refresh the image when the (peer,display) is already subscribed.
+    if (displays != null) {
+      for (final display in displays) {
+        bind.sessionRefresh(sessionId: sessionId, display: display);
+      }
+    }
 
     final SimpleWrapper<bool> isToNewWindowNotified = SimpleWrapper(false);
     // Preserved for the rgba data.
@@ -1784,8 +2053,9 @@ class FFI {
         // Session is read to be moved to a new window.
         // Get the cached data and handle the cached data.
         Future.delayed(Duration.zero, () async {
+          final args = jsonEncode({'id': id, 'close': display == null});
           final cachedData = await DesktopMultiWindow.invokeMethod(
-              tabWindowId, kWindowEventGetCachedSessionData, id);
+              tabWindowId, kWindowEventGetCachedSessionData, args);
           if (cachedData == null) {
             // unreachable
             debugPrint('Unreachable, the cached data is empty.');
@@ -1797,7 +2067,7 @@ class FFI {
             return;
           }
           await ffiModel.handleCachedPeerData(data, id);
-          await bind.sessionRefresh(sessionId: sessionId);
+          await sessionRefreshVideo(sessionId, ffiModel.pi);
         });
         isToNewWindowNotified.value = true;
       }
@@ -1819,18 +2089,19 @@ class FFI {
             await cb(event);
           }
         } else if (message is EventToUI_Rgba) {
+          final display = message.field0;
           if (useTextureRender) {
             onEvent2UIRgba();
           } else {
             // Fetch the image buffer from rust codes.
-            final sz = platformFFI.getRgbaSize(sessionId);
+            final sz = platformFFI.getRgbaSize(sessionId, display);
             if (sz == 0) {
               return;
             }
-            final rgba = platformFFI.getRgba(sessionId, sz);
+            final rgba = platformFFI.getRgba(sessionId, display, sz);
             if (rgba != null) {
               onEvent2UIRgba();
-              imageModel.onRgba(rgba);
+              imageModel.onRgba(display, rgba);
             }
           }
         }
@@ -1855,7 +2126,7 @@ class FFI {
         cb(id);
       }
     }
-  }  
+  }
   
   /// Login with [password], choose if the client should [remember] it.
   void login(String osUsername, String osPassword, SessionID sessionId,
@@ -1962,24 +2233,73 @@ class Features {
   bool privacyMode = false;
 }
 
+const kInvalidDisplayIndex = -1;
+
 class PeerInfo with ChangeNotifier {
   String version = '';
   String username = '';
   String hostname = '';
   String platform = '';
   bool sasEnabled = false;
+  bool isSupportMultiUiSession = false;
   int currentDisplay = 0;
+  int primaryDisplay = kInvalidDisplayIndex;
   List<Display> displays = [];
   Features features = Features();
   List<Resolution> resolutions = [];
-  Map<String, dynamic> platform_additions = {};
+  Map<String, dynamic> platformAdditions = {};
 
+  RxInt displaysCount = 0.obs;
   RxBool isSet = false.obs;
 
-  bool get is_wayland => platform_additions['is_wayland'] == true;
-  bool get is_headless => platform_additions['headless'] == true;
-}
+  bool get isWayland => platformAdditions['is_wayland'] == true;
+  bool get isHeadless => platformAdditions['headless'] == true;
 
+  bool get isSupportMultiDisplay => isDesktop && isSupportMultiUiSession;
+
+  bool get cursorEmbedded => tryGetDisplay()?.cursorEmbedded ?? false;
+
+  Display? tryGetDisplay() {
+    if (displays.isEmpty) {
+      return null;
+    }
+    if (currentDisplay == kAllDisplayValue) {
+      return displays[0];
+    } else {
+      if (currentDisplay > 0 && currentDisplay < displays.length) {
+        return displays[currentDisplay];
+      } else {
+        return displays[0];
+      }
+    }
+  }
+
+  Display? tryGetDisplayIfNotAllDisplay() {
+    if (displays.isEmpty) {
+      return null;
+    }
+    if (currentDisplay == kAllDisplayValue) {
+      return null;
+    }
+    if (currentDisplay >= 0 && currentDisplay < displays.length) {
+      return displays[currentDisplay];
+    } else {
+      return null;
+    }
+  }
+
+  List<Display> getCurDisplays() {
+    if (currentDisplay == kAllDisplayValue) {
+      return displays;
+    } else {
+      if (currentDisplay >= 0 && currentDisplay < displays.length) {
+        return [displays[currentDisplay]];
+      } else {
+        return [];
+      }
+    }
+  }
+}
 
 const canvasKey = 'canvas';
 
@@ -2022,8 +2342,8 @@ Future<void> initializeCursorAndCanvas(FFI ffi) async {
     currentDisplay = p['currentDisplay'];
   }
   if (p == null || currentDisplay != ffi.ffiModel.pi.currentDisplay) {
-    ffi.cursorModel
-        .updateDisplayOrigin(ffi.ffiModel.display.x, ffi.ffiModel.display.y);
+    ffi.cursorModel.updateDisplayOrigin(
+        ffi.ffiModel.rect?.left ?? 0, ffi.ffiModel.rect?.top ?? 0);
     return;
   }
   double xCursor = p['xCursor'];
@@ -2031,8 +2351,8 @@ Future<void> initializeCursorAndCanvas(FFI ffi) async {
   double xCanvas = p['xCanvas'];
   double yCanvas = p['yCanvas'];
   double scale = p['scale'];
-  ffi.cursorModel.updateDisplayOriginWithCursor(
-      ffi.ffiModel.display.x, ffi.ffiModel.display.y, xCursor, yCursor);
+  ffi.cursorModel.updateDisplayOriginWithCursor(ffi.ffiModel.rect?.left ?? 0,
+      ffi.ffiModel.rect?.top ?? 0, xCursor, yCursor);
   ffi.canvasModel.update(xCanvas, yCanvas, scale);
 }
 

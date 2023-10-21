@@ -48,6 +48,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsInputMonitoring = false;
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
+  bool isCardClosed = false;
 
   @override
   Widget build(BuildContext context) {
@@ -185,11 +186,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           backgroundColor: hover.value
               ? Theme.of(context).scaffoldBackgroundColor
               : Theme.of(context).colorScheme.background,
-          child: Icon(
-            Icons.more_vert_outlined,
-            size: 20,
-            color: hover.value ? textColor : textColor?.withOpacity(0.5),
-          ),
+          child: Tooltip(
+              message: translate('Settings'),
+              child: Icon(
+                Icons.more_vert_outlined,
+                size: 20,
+                color: hover.value ? textColor : textColor?.withOpacity(0.5),
+              )),
         ),
       ),
       onHover: (value) => hover.value = value,
@@ -252,23 +255,28 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         onPressed: () => bind.mainUpdateTemporaryPassword(),
                         child: Obx(() => RotatedBox(
                             quarterTurns: 2,
-                            child: Icon(
-                              Icons.refresh,
-                              color: refreshHover.value
-                                  ? textColor
-                                  : Color(0xFFDDDDDD),
-                              size: 22,
-                            ))),
+                            child: Tooltip(
+                                message: translate('Refresh Password'),
+                                child: Icon(
+                                  Icons.refresh,
+                                  color: refreshHover.value
+                                      ? textColor
+                                      : Color(0xFFDDDDDD),
+                                  size: 22,
+                                )))),
                         onHover: (value) => refreshHover.value = value,
                       ).marginOnly(right: 8, top: 4),
                       InkWell(
                         child: Obx(
-                          () => Icon(
-                            Icons.edit,
-                            color:
-                                editHover.value ? textColor : Color(0xFFDDDDDD),
-                            size: 22,
-                          ).marginOnly(right: 8, top: 4),
+                          () => Tooltip(
+                              message: translate('Change Password'),
+                              child: Icon(
+                                Icons.edit,
+                                color: editHover.value
+                                    ? textColor
+                                    : Color(0xFFDDDDDD),
+                                size: 22,
+                              )).marginOnly(right: 8, top: 4),
                         ),
                         onTap: () => DesktopSettingPage.switch2page(1),
                         onHover: (value) => editHover.value = value,
@@ -314,14 +322,14 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   }
 
   Future<Widget> buildHelpCards() async {
-    if (updateUrl.isNotEmpty) {
+    if (updateUrl.isNotEmpty && !isCardClosed) {
       return buildInstallCard(
           "Status",
           "There is a newer version of ${bind.mainGetAppNameSync()} ${bind.mainGetNewVersion()} available.",
           "Click to download", () async {
-        final Uri url = Uri.parse('https://rustdesk.com/download');
+        final Uri url = Uri.parse('');
         await launchUrl(url);
-      });
+      }, closeButton: true);
     }
     if (systemError.isNotEmpty) {
       return buildInstallCard("", systemError, "", () {});
@@ -330,10 +338,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (!bind.mainIsInstalled()) {
         return buildInstallCard(
             "", "install_tip", "Install", bind.mainGotoInstall);
-      }// else if (bind.mainIsInstalledLowerVersion()) {
-       // return buildInstallCard("Status", "Your installation is lower version.",
-       //     "Click to upgrade", bind.mainUpdateMe);
-      //}
+      } else if (bind.mainIsInstalledLowerVersion()) {
+        //return buildInstallCard("Status", "Your installation is lower version.",
+        //    "Click to upgrade", bind.mainUpdateMe); //hophere
+      }
     } else if (Platform.isMacOS) {
       if (!bind.mainIsCanScreenRecording(prompt: false)) {
         return buildInstallCard("Permissions", "config_screen", "Configure",
@@ -372,12 +380,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     } else if (Platform.isLinux) {
       if (bind.mainCurrentIsWayland()) {
         return buildInstallCard(
-            "Warning", translate("wayland_experiment_tip"), "", () async {},
+            "Warning", "wayland_experiment_tip", "", () async {},
             help: 'Help',
             link: '');
       } else if (bind.mainIsLoginWayland()) {
         return buildInstallCard("Warning",
-            "Login screen using Wayland is not supported.", "", () async {},
+            "Login screen using Wayland is not supported", "", () async {},
             help: 'Help',
             link: '');
       }
@@ -387,11 +395,19 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Widget buildInstallCard(String title, String content, String btnText,
       GestureTapCallback onPressed,
-      {String? help, String? link}) {
-    return Container(
-      margin: EdgeInsets.only(top: 20),
-      child: Container(
-          decoration: BoxDecoration(
+      {String? help, String? link, bool? closeButton}) {
+    void closeCard() {
+      setState(() {
+        isCardClosed = true;
+      });
+    }
+
+    return Stack(
+      children: [
+        Container(
+          margin: EdgeInsets.only(top: 20),
+          child: Container(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
             begin: Alignment.centerLeft,
             end: Alignment.centerRight,
@@ -460,19 +476,33 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                                   )).marginOnly(top: 6)),
                         ]
                       : <Widget>[]))),
+        ),
+        if (closeButton != null && closeButton == true)
+        Positioned(
+          top: 18,
+          right: 0,
+          child: IconButton(
+            icon: Icon(
+              Icons.close,
+              color: Colors.white,
+              size: 20,
+            ),
+            onPressed: closeCard,
+          ),
+        ),
+      ],
     );
   }
 
   @override
   void initState() {
     super.initState();
+    Timer(const Duration(seconds: 1), () async {
+      updateUrl = await bind.mainGetSoftwareUpdateUrl();
+      if (updateUrl.isNotEmpty) setState(() {});
+    });
     _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
       await gFFI.serverModel.fetchID();
-      final url = await bind.mainGetSoftwareUpdateUrl();
-      if (updateUrl != url) {
-        updateUrl = url;
-        setState(() {});
-      }
       final error = await bind.mainGetError();
       if (systemError != error) {
         systemError = error;
@@ -523,6 +553,22 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     Get.put<RxBool>(svcStopped, tag: 'stop-service');
     rustDeskWinManager.registerActiveWindowListener(onActiveWindowChanged);
 
+    screenToMap(window_size.Screen screen) => {
+          'frame': {
+            'l': screen.frame.left,
+            't': screen.frame.top,
+            'r': screen.frame.right,
+            'b': screen.frame.bottom,
+          },
+          'visibleFrame': {
+            'l': screen.visibleFrame.left,
+            't': screen.visibleFrame.top,
+            'r': screen.visibleFrame.right,
+            'b': screen.visibleFrame.bottom,
+          },
+          'scaleFactor': screen.scaleFactor,
+        };
+
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       debugPrint(
           "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
@@ -531,30 +577,19 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       } else if (call.method == kWindowGetWindowInfo) {
         final screen = (await window_size.getWindowInfo()).screen;
         if (screen == null) {
-          return "";
+          return '';
         } else {
-          return jsonEncode({
-            'frame': {
-              'l': screen.frame.left,
-              't': screen.frame.top,
-              'r': screen.frame.right,
-              'b': screen.frame.bottom,
-            },
-            'visibleFrame': {
-              'l': screen.visibleFrame.left,
-              't': screen.visibleFrame.top,
-              'r': screen.visibleFrame.right,
-              'b': screen.visibleFrame.bottom,
-            },
-            'scaleFactor': screen.scaleFactor,
-          });
+          return jsonEncode(screenToMap(screen));
         }
+      } else if (call.method == kWindowGetScreenList) {
+        return jsonEncode(
+            (await window_size.getScreenList()).map(screenToMap).toList());
       } else if (call.method == kWindowActionRebuild) {
         reloadCurrentWindow();
       } else if (call.method == kWindowEventShow) {
         await rustDeskWinManager.registerActiveWindow(call.arguments["id"]);
       } else if (call.method == kWindowEventHide) {
-        await rustDeskWinManager.unregisterActiveWindow(call.arguments["id"]);
+        await rustDeskWinManager.unregisterActiveWindow(call.arguments['id']);
       } else if (call.method == kWindowConnect) {
         await connectMainDesktop(
           call.arguments['id'],
@@ -563,6 +598,27 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           isRDP: call.arguments['isRDP'],
           forceRelay: call.arguments['forceRelay'],
         );
+      } else if (call.method == kWindowEventMoveTabToNewWindow) {
+        final args = call.arguments.split(',');
+        int? windowId;
+        try {
+          windowId = int.parse(args[0]);
+        } catch (e) {
+          debugPrint("Failed to parse window id '${call.arguments}': $e");
+        }
+        if (windowId != null) {
+          await rustDeskWinManager.moveTabToNewWindow(
+              windowId, args[1], args[2]);
+        }
+      } else if (call.method == kWindowEventOpenMonitorSession) {
+        final args = jsonDecode(call.arguments);
+        final windowId = args['window_id'] as int;
+        final peerId = args['peer_id'] as String;
+        final display = args['display'] as int;
+        final displayCount = args['display_count'] as int;
+        final screenRect = parseParamScreenRect(args);
+        await rustDeskWinManager.openMonitorSession(
+            windowId, peerId, display, displayCount, screenRect);
       }
     });
     _uniLinksSubscription = listenUniLinks();

@@ -60,7 +60,7 @@ class _PortForwardTabPageState extends State<PortForwardTabPage> {
       debugPrint(
           "[Port Forward] call ${call.method} with args ${call.arguments} from window $fromWindowId");
       // for simplify, just replace connectionId
-      if (call.method == "new_port_forward") {
+      if (call.method == kWindowEventNewPortForward) {
         final args = jsonDecode(call.arguments);
         final id = args['id'];
         final isRDP = args['isRDP'];

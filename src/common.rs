@@ -53,6 +53,7 @@ pub const PLATFORM_LINUX: &str = "Linux";
 pub const PLATFORM_MACOS: &str = "Mac OS";
 pub const PLATFORM_ANDROID: &str = "Android";
 
+const MIN_VER_MULTI_UI_SESSION: &str = "1.40.8";
 pub mod input {
     pub const MOUSE_TYPE_MOVE: i32 = 0;
     pub const MOUSE_TYPE_DOWN: i32 = 1;
@@ -105,7 +106,7 @@ pub fn global_init() -> bool {
     #[cfg(target_os = "linux")]
     {
         if !scrap::is_x11() {
-            crate::server::wayland::set_wayland_scrap_map_err();
+            crate::server::wayland::init();
         }
     }
     true
@@ -116,6 +117,16 @@ pub fn global_clean() {}
 #[inline]
 pub fn set_server_running(b: bool) {
     *SERVER_RUNNING.write().unwrap() = b;
+}
+
+#[inline]
+pub fn is_support_multi_ui_session(ver: &str) -> bool {
+    is_support_multi_ui_session_num(hbb_common::get_version_number(ver))
+}
+
+#[inline]
+pub fn is_support_multi_ui_session_num(ver: i64) -> bool {
+    ver >= hbb_common::get_version_number(MIN_VER_MULTI_UI_SESSION)
 }
 
 // is server process, with "--server" args
@@ -663,7 +674,7 @@ async fn test_rendezvous_server_() {
                 let tm = std::time::Instant::now();
                 if socket_client::connect_tcp(
                     crate::check_port(&host, RENDEZVOUS_PORT),
-                    Config::get_any_listen_addr(true),
+                    //Config::get_any_listen_addr(true),
                     RENDEZVOUS_TIMEOUT,
                 )
                 .await
@@ -715,7 +726,7 @@ pub fn run_me<T: AsRef<std::ffi::OsStr>>(args: Vec<T>) -> std::io::Result<std::p
     }
     #[cfg(feature = "appimage")]
     {
-        let appdir = std::env::var("APPDIR").unwrap();
+        let appdir = std::env::var("APPDIR").map_err(|_| std::io::ErrorKind::Other)?;
         let appimage_cmd = std::path::Path::new(&appdir).join("AppRun");
         log::info!("path: {:?}", appimage_cmd);
         return std::process::Command::new(appimage_cmd).args(&args).spawn();
@@ -738,6 +749,51 @@ pub fn hostname() -> String {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return DEVICE_NAME.lock().unwrap().clone();
 }
+
+/*
+#[inline]
+pub fn get_sysinfo() -> serde_json::Value {
+    use hbb_common::sysinfo::{CpuExt, System, SystemExt};
+    let system = System::new_all();
+    let memory = system.total_memory();
+    let memory = (memory as f64 / 1024. / 1024. / 1024. * 100.).round() / 100.;
+    let cpus = system.cpus();
+    let cpu_name = cpus.first().map(|x| x.brand()).unwrap_or_default();
+    let cpu_name = cpu_name.trim_end();
+    let cpu_freq = cpus.first().map(|x| x.frequency()).unwrap_or_default();
+    let cpu_freq = (cpu_freq as f64 / 1024. * 100.).round() / 100.;
+    let cpu = if cpu_freq > 0. {
+        format!("{}, {}GHz, ", cpu_name, cpu_freq)
+    } else {
+        "".to_owned() // android
+    };
+    let num_cpus = num_cpus::get();
+    let num_pcpus = num_cpus::get_physical();
+    let mut os = system.distribution_id();
+    os = format!("{} / {}", os, system.long_os_version().unwrap_or_default());
+    #[cfg(windows)]
+    {
+        os = format!("{os} - {}", system.os_version().unwrap_or_default());
+    }
+    let hostname = hostname(); // sys.hostname() return localhost on android in my test
+    use serde_json::json;
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let out;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let mut out;
+    out = json!({
+        "cpu": format!("{cpu}{num_cpus}/{num_pcpus} cores"),
+        "memory": format!("{memory}GB"),
+        "os": os,
+        "hostname": hostname,
+    });
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        out["username"] = json!(crate::platform::get_active_username());
+    }
+    out
+}
+*/
 
 #[inline]
 pub fn check_port<T: std::string::ToString>(host: T, port: i32) -> String {

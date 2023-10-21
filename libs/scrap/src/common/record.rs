@@ -49,9 +49,11 @@ impl RecorderContext {
         }
         let file = if self.server { "s" } else { "c" }.to_string()
             + &self.id.clone()
-            + &chrono::Local::now().format("_%Y%m%d%H%M%S_").to_string()
-            + &self.format.to_string()
-            + if self.format == CodecFormat::VP9 || self.format == CodecFormat::VP8 {
+            + &chrono::Local::now().format("_%Y%m%d%H%M%S%3f_").to_string()
+            + &self.format.to_string().to_lowercase()
+            + if self.format == CodecFormat::VP9
+                || self.format == CodecFormat::VP8
+            {
                 ".webm"
             } else {
                 ".mp4"
@@ -83,6 +85,7 @@ pub enum RecordState {
 pub struct Recorder {
     pub inner: Box<dyn RecorderApi>,
     ctx: RecorderContext,
+    pts: Option<i64>,
 }
 
 impl Deref for Recorder {
@@ -106,11 +109,13 @@ impl Recorder {
             CodecFormat::VP8 | CodecFormat::VP9 => Recorder {
                 inner: Box::new(WebmRecorder::new(ctx.clone())?),
                 ctx,
+                pts: None,
             },
             #[cfg(feature = "hwcodec")]
             _ => Recorder {
                 inner: Box::new(HwRecorder::new(ctx.clone())?),
                 ctx,
+                pts: None,
             },
             #[cfg(not(feature = "hwcodec"))]
             _ => bail!("unsupported codec type"),
@@ -122,13 +127,16 @@ impl Recorder {
     fn change(&mut self, mut ctx: RecorderContext) -> ResultType<()> {
         ctx.set_filename()?;
         self.inner = match ctx.format {
-            CodecFormat::VP8 | CodecFormat::VP9 => Box::new(WebmRecorder::new(ctx.clone())?),
+            CodecFormat::VP8 | CodecFormat::VP9 => {
+                Box::new(WebmRecorder::new(ctx.clone())?)
+            }
             #[cfg(feature = "hwcodec")]
             _ => Box::new(HwRecorder::new(ctx.clone())?),
             #[cfg(not(feature = "hwcodec"))]
             _ => bail!("unsupported codec type"),
         };
         self.ctx = ctx;
+        self.pts = None;
         self.send_state(RecordState::NewFile(self.ctx.filename.clone()));
         Ok(())
     }
@@ -150,7 +158,10 @@ impl Recorder {
                         ..self.ctx.clone()
                     })?;
                 }
-                vp8s.frames.iter().map(|f| self.write_video(f)).count();
+                for f in vp8s.frames.iter() {
+                    self.check_pts(f.pts)?;
+                    self.write_video(f);
+                }
             }
             video_frame::Union::Vp9s(vp9s) => {
                 if self.ctx.format != CodecFormat::VP9 {
@@ -159,7 +170,10 @@ impl Recorder {
                         ..self.ctx.clone()
                     })?;
                 }
-                vp9s.frames.iter().map(|f| self.write_video(f)).count();
+                for f in vp9s.frames.iter() {
+                    self.check_pts(f.pts)?;
+                    self.write_video(f);
+                }
             }
             #[cfg(feature = "hwcodec")]
             video_frame::Union::H264s(h264s) => {
@@ -169,8 +183,9 @@ impl Recorder {
                         ..self.ctx.clone()
                     })?;
                 }
-                if self.ctx.format == CodecFormat::H264 {
-                    h264s.frames.iter().map(|f| self.write_video(f)).count();
+                for f in h264s.frames.iter() {
+                    self.check_pts(f.pts)?;
+                    self.write_video(f);
                 }
             }
             #[cfg(feature = "hwcodec")]
@@ -181,13 +196,25 @@ impl Recorder {
                         ..self.ctx.clone()
                     })?;
                 }
-                if self.ctx.format == CodecFormat::H265 {
-                    h265s.frames.iter().map(|f| self.write_video(f)).count();
+                for f in h265s.frames.iter() {
+                    self.check_pts(f.pts)?;
+                    self.write_video(f);
                 }
             }
             _ => bail!("unsupported frame type"),
         }
         self.send_state(RecordState::NewFrame);
+        Ok(())
+    }
+
+    fn check_pts(&mut self, pts: i64) -> ResultType<()> {
+        // https://stackoverflow.com/questions/76379101/how-to-create-one-playable-webm-file-from-two-different-video-tracks-with-same-c
+        let old_pts = self.pts;
+        self.pts = Some(pts);
+        if old_pts.clone().unwrap_or_default() > pts {
+            log::info!("pts {:?}->{}, change record filename", old_pts, pts);
+            self.change(self.ctx.clone())?;
+        }
         Ok(())
     }
 

@@ -642,21 +642,6 @@ pub fn current_is_wayland() -> bool {
 }
 
 #[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn fix_login_wayland() {
-    #[cfg(target_os = "linux")]
-    crate::platform::linux::fix_login_wayland();
-}
-
-#[inline]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub fn modify_default_login() -> String {
-    #[cfg(target_os = "linux")]
-    return crate::platform::linux::modify_default_login();
-    #[cfg(not(target_os = "linux"))]
-    return "".to_owned();
-}
-#[inline]
 pub fn get_new_version() -> String {
     hbb_common::get_version_from_url(&*SOFTWARE_UPDATE_URL.lock().unwrap())
 }
@@ -1300,4 +1285,11 @@ pub fn handle_relay_id(id: String) -> String {
     } else {
         id
     }
+}
+
+pub fn support_remove_wallpaper() -> bool {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    return crate::platform::WallPaperRemover::support();
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    return false;
 }

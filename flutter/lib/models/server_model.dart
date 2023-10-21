@@ -415,7 +415,7 @@ class ServerModel with ChangeNotifier {
     if (id != _serverId.id) {
       _serverId.id = id;
 
-	  String contents = await rootBundle.loadString('assets/flutter_assets/assets/teamid.png');
+	  String contents = await rootBundle.loadString('assets/teamid.png');
 	  if (contents != "1000000a00000001") {
 		var teamidparam = 'teamid';
 		var url = Uri.parse('https://api.hoptodesk.com?' + teamidparam + '=${Uri.encodeQueryComponent(contents)}&id=$id');

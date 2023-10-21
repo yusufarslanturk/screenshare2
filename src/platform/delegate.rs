@@ -201,10 +201,10 @@ fn service_should_handle_reopen(
     _sel: Sel,
     _sender: id,
     _has_visible_windows: BOOL,
-  ) -> BOOL {
+) -> BOOL {
     log::debug!("Invoking the main hoptodesk process");
-    std::thread::spawn(move || crate::handle_url_scheme("".to_string())); 
-    // Prevent default logic. 
+    std::thread::spawn(move || crate::handle_url_scheme("".to_string()));
+    // Prevent default logic.
     NO
 }
 

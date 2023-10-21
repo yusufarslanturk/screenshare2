@@ -17,7 +17,7 @@ use rdev::{self, EventType, Key as RdevKey, KeyCode, RawKey};
 use rdev::{CGEventSourceStateID, CGEventTapLocation, VirtualInput};
 use std::{
     convert::TryFrom,
-    ops::Sub,
+    ops::{Deref, DerefMut, Sub},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{self, Duration, Instant},
@@ -236,18 +236,43 @@ fn should_disable_numlock(evt: &KeyEvent) -> bool {
 
 pub const NAME_CURSOR: &'static str = "mouse_cursor";
 pub const NAME_POS: &'static str = "mouse_pos";
-pub type MouseCursorService = ServiceTmpl<MouseCursorSub>;
+#[derive(Clone)]
+pub struct MouseCursorService {
+    pub sp: ServiceTmpl<MouseCursorSub>,
+}
 
-pub fn new_cursor() -> MouseCursorService {
-    let sp = MouseCursorService::new(NAME_CURSOR, true);
-    sp.repeat::<StateCursor, _>(33, run_cursor);
-    sp
+impl Deref for MouseCursorService {
+    type Target = ServiceTmpl<MouseCursorSub>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sp
+    }
+}
+
+impl DerefMut for MouseCursorService {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sp
+    }
+}
+
+impl MouseCursorService {
+    pub fn new(name: String, need_snapshot: bool) -> Self {
+        Self {
+            sp: ServiceTmpl::<MouseCursorSub>::new(name, need_snapshot),
+        }
+    }
+}
+
+pub fn new_cursor() -> ServiceTmpl<MouseCursorSub> {
+    let svc = MouseCursorService::new(NAME_CURSOR.to_owned(), true);
+    ServiceTmpl::<MouseCursorSub>::repeat::<StateCursor, _, _>(&svc.clone(), 33, run_cursor);
+    svc.sp
 }
 
 pub fn new_pos() -> GenericService {
-    let sp = GenericService::new(NAME_POS, false);
-    sp.repeat::<StatePos, _>(33, run_pos);
-    sp
+    let svc = EmptyExtraFieldService::new(NAME_POS.to_owned(), false);
+    GenericService::repeat::<StatePos, _, _>(&svc.clone(), 33, run_pos);
+    svc.sp
 }
 
 #[inline]
@@ -258,7 +283,7 @@ fn update_last_cursor_pos(x: i32, y: i32) {
     }
 }
 
-fn run_pos(sp: GenericService, state: &mut StatePos) -> ResultType<()> {
+fn run_pos(sp: EmptyExtraFieldService, state: &mut StatePos) -> ResultType<()> {
     let (_, (x, y)) = *LATEST_SYS_CURSOR_POS.lock().unwrap();
     if x == INVALID_CURSOR_POS || y == INVALID_CURSOR_POS {
         return Ok(());
@@ -343,7 +368,7 @@ static EXITING: AtomicBool = AtomicBool::new(false);
 
 const MOUSE_MOVE_PROTECTION_TIMEOUT: Duration = Duration::from_millis(1_000);
 // Actual diff of (x,y) is (1,1) here. But 5 may be tolerant.
-const MOUSE_ACTIVE_DISTANCE: i32 = 5;
+//const MOUSE_ACTIVE_DISTANCE: i32 = 5;
 
 static RECORD_CURSOR_POS_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -702,11 +727,13 @@ pub fn update_latest_input_cursor_time(conn: i32) {
     lock.time = get_time();
 }
 
+/*
 #[inline]
 fn get_last_input_cursor_pos() -> (i32, i32) {
     let lock = LATEST_PEER_INPUT_CURSOR.lock().unwrap();
     (lock.x, lock.y)
 }
+*/
 
 // check if mouse is moved by the controlled side user to make controlled side has higher mouse priority than remote.
 // check if mouse is moved by the controlled side user to make controlled side has higher mouse priority than remote.
@@ -991,7 +1018,6 @@ pub async fn lock_screen() {
     crate::platform::lock_screen();
     }
     }
-    super::video_service::switch_to_primary().await;
 }
 
 pub fn handle_key(evt: &KeyEvent) {

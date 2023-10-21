@@ -15,6 +15,7 @@ import 'package:flutter_hbb/common/formatter/id_formatter.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/main.dart';
+import 'package:flutter_hbb/models/desktop_render_texture.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
@@ -52,6 +53,9 @@ int androidVersion = 0;
 int windowsBuildNumber = 0;
 DesktopType? desktopType;
 
+bool get isMainDesktopWindow =>
+    desktopType == DesktopType.main || desktopType == DesktopType.cm;
+    
 /// Check if the app is running with single view mode.
 bool isSingleViewApp() {
   return desktopType == DesktopType.cm;
@@ -573,7 +577,7 @@ closeConnection({String? id}) {
   }
 }
 
-void windowOnTop(int? id) async {
+Future<void> windowOnTop(int? id) async {
   if (!isDesktop) {
     return;
   }
@@ -716,9 +720,12 @@ class OverlayDialogManager {
   String showLoading(String text,
       {bool clickMaskDismiss = false,
       bool showCancel = true,
-      VoidCallback? onCancel}) {
-    final tag = _tagCount.toString();
-    _tagCount++;
+      VoidCallback? onCancel,
+      String? tag}) {
+    if (tag == null) {
+      tag = _tagCount.toString();
+      _tagCount++;
+    }
     show((setState, close, context) {
       cancel() {
         dismissAll();
@@ -1031,7 +1038,7 @@ Widget msgboxIcon(String type) {
   if (type == 'on-uac' || type == 'on-foreground-elevated') {
     iconData = Icons.admin_panel_settings;
   }
-  if (type == "info") {
+  if (type.contains('info')) {
     iconData = Icons.info;
   }
   if (iconData != null) {
@@ -1404,7 +1411,7 @@ Widget getPlatformImage(String platform, {double size = 50}) {
     platform = platform.toLowerCase();
   }
   if (platform == kPeerPlatformAndroid) {
-	platform = 'phone';
+	platform = 'phone'; //hophere
   }
   return SvgPicture.asset('assets/$platform.svg', height: size, width: size);
 }
@@ -1464,8 +1471,8 @@ Future<void> saveWindowPosition(WindowType type, {int? windowId}) async {
   late Offset position;
   late Size sz;
   late bool isMaximized;
-  bool isFullscreen = stateGlobal.fullscreen ||
-      (Platform.isMacOS && stateGlobal.closeOnFullscreen);
+  bool isFullscreen = stateGlobal.fullscreen.isTrue ||
+      (Platform.isMacOS && stateGlobal.closeOnFullscreen == true);
   setFrameIfMaximized() {
     if (isMaximized) {
       final pos = bind.getLocalFlutterOption(k: kWindowPrefix + type.name);
@@ -1644,7 +1651,7 @@ Future<Offset?> _adjustRestoreMainWindowOffset(
 /// Restore window position and size on start
 /// Note that windowId must be provided if it's subwindow
 Future<bool> restoreWindowPosition(WindowType type,
-    {int? windowId, String? peerId}) async {
+    {int? windowId, String? peerId, int? display}) async {
 /*  if (bind
       .mainGetEnv(key: "DISABLE_RUSTDESK_RESTORE_WINDOW_POSITION")
       .isNotEmpty) {
@@ -1680,14 +1687,22 @@ Future<bool> restoreWindowPosition(WindowType type,
     debugPrint("no window position saved, ignoring position restoration");
     return false;
   }
-  if (type == WindowType.RemoteDesktop &&
-      !isRemotePeerPos &&
-      windowId != null) {
-    if (lpos.offsetWidth != null) {
-      lpos.offsetWidth = lpos.offsetWidth! + windowId * 20;
+  if (type == WindowType.RemoteDesktop) {
+    if (!isRemotePeerPos && windowId != null) {
+      if (lpos.offsetWidth != null) {
+        lpos.offsetWidth = lpos.offsetWidth! + windowId * kNewWindowOffset;
+      }
+      if (lpos.offsetHeight != null) {
+        lpos.offsetHeight = lpos.offsetHeight! + windowId * kNewWindowOffset;
+      }
     }
-    if (lpos.offsetHeight != null) {
-      lpos.offsetHeight = lpos.offsetHeight! + windowId * 20;
+    if (display != null) {
+      if (lpos.offsetWidth != null) {
+        lpos.offsetWidth = lpos.offsetWidth! + display * kNewWindowOffset;
+      }
+      if (lpos.offsetHeight != null) {
+        lpos.offsetHeight = lpos.offsetHeight! + display * kNewWindowOffset;
+      }
     }
   }
 
@@ -1764,7 +1779,7 @@ Future<bool> restoreWindowPosition(WindowType type,
     if (initialLink == null) {
       return false;
     }
-    //return parseRustdeskUri(initialLink);
+    return handleUriLink(uriString: initialLink);
   } catch (err) {
     debugPrintStack(label: "$err");
     return false;
@@ -1808,7 +1823,7 @@ enum UriLinkType {
 // uri link handler
 bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
   List<String>? args;
-  if (cmdArgs != null) {
+  if (cmdArgs != null && cmdArgs.isNotEmpty) {
     args = cmdArgs;
     // rustdesk <uri link>
     if (args.isNotEmpty && args[0].startsWith(kUniLinksPrefix)) {
@@ -2313,7 +2328,7 @@ Widget dialogButton(String text,
   }
 }
 
-int version_cmp(String v1, String v2) {
+int versionCmp(String v1, String v2) {
   return bind.versionToNumber(v: v1) - bind.versionToNumber(v: v2);
 }
 
@@ -2584,4 +2599,147 @@ String getDesktopTabLabel(String peerId, String alias) {
     debugPrint("Failed to get hostname:$e");
   }*/
   return label;
+}
+
+
+sessionRefreshVideo(SessionID sessionId, PeerInfo pi) async {
+  if (pi.currentDisplay == kAllDisplayValue) {
+    for (int i = 0; i < pi.displays.length; i++) {
+      await bind.sessionRefresh(sessionId: sessionId, display: i);
+    }
+  } else {
+    await bind.sessionRefresh(sessionId: sessionId, display: pi.currentDisplay);
+  }
+}
+
+bool isChooseDisplayToOpenInNewWindow(PeerInfo pi, SessionID sessionId) =>
+    pi.isSupportMultiDisplay &&
+    useTextureRender &&
+    bind.sessionGetDisplaysAsIndividualWindows(sessionId: sessionId) == 'Y';
+
+Future<List<Rect>> getScreenListWayland() async {
+  final screenRectList = <Rect>[];
+  if (isMainDesktopWindow) {
+    for (var screen in await window_size.getScreenList()) {
+      final scale = kIgnoreDpi ? 1.0 : screen.scaleFactor;
+      double l = screen.frame.left;
+      double t = screen.frame.top;
+      double r = screen.frame.right;
+      double b = screen.frame.bottom;
+      final rect = Rect.fromLTRB(l / scale, t / scale, r / scale, b / scale);
+      screenRectList.add(rect);
+    }
+  } else {
+    final screenList = await rustDeskWinManager.call(
+        WindowType.Main, kWindowGetScreenList, '');
+    try {
+      for (var screen in jsonDecode(screenList.result) as List<dynamic>) {
+        final scale = kIgnoreDpi ? 1.0 : screen['scaleFactor'];
+        double l = screen['frame']['l'];
+        double t = screen['frame']['t'];
+        double r = screen['frame']['r'];
+        double b = screen['frame']['b'];
+        final rect = Rect.fromLTRB(l / scale, t / scale, r / scale, b / scale);
+        screenRectList.add(rect);
+      }
+    } catch (e) {
+      debugPrint('Failed to parse screenList: $e');
+    }
+  }
+  return screenRectList;
+}
+
+Future<List<Rect>> getScreenListNotWayland() async {
+  final screenRectList = <Rect>[];
+  final displays = bind.mainGetDisplays();
+  if (displays.isEmpty) {
+    return screenRectList;
+  }
+  try {
+    for (var display in jsonDecode(displays) as List<dynamic>) {
+      // to-do: scale factor ?
+      // final scale = kIgnoreDpi ? 1.0 : screen.scaleFactor;
+      double l = display['x'].toDouble();
+      double t = display['y'].toDouble();
+      double r = (display['x'] + display['w']).toDouble();
+      double b = (display['y'] + display['h']).toDouble();
+      screenRectList.add(Rect.fromLTRB(l, t, r, b));
+    }
+  } catch (e) {
+    debugPrint('Failed to parse displays: $e');
+  }
+  return screenRectList;
+}
+
+Future<List<Rect>> getScreenRectList() async {
+  return bind.mainCurrentIsWayland()
+      ? await getScreenListWayland()
+      : await getScreenListNotWayland();
+}
+
+openMonitorInTheSameTab(int i, FFI ffi, PeerInfo pi) {
+  final displays = i == kAllDisplayValue
+      ? List.generate(pi.displays.length, (index) => index)
+      : [i];
+  bind.sessionSwitchDisplay(
+      sessionId: ffi.sessionId, value: Int32List.fromList(displays));
+  ffi.ffiModel.switchToNewDisplay(i, ffi.sessionId, ffi.id);
+}
+
+// Open new tab or window to show this monitor.
+// For now just open new window.
+//
+// screenRect is used to move the new window to the specified screen and set fullscreen.
+openMonitorInNewTabOrWindow(int i, String peerId, PeerInfo pi,
+    {Rect? screenRect}) {
+  final args = {
+    'window_id': stateGlobal.windowId,
+    'peer_id': peerId,
+    'display': i,
+    'display_count': pi.displays.length,
+  };
+  if (screenRect != null) {
+    args['screen_rect'] = {
+      'l': screenRect.left,
+      't': screenRect.top,
+      'r': screenRect.right,
+      'b': screenRect.bottom,
+    };
+  }
+  DesktopMultiWindow.invokeMethod(
+      kMainWindowId, kWindowEventOpenMonitorSession, jsonEncode(args));
+}
+
+tryMoveToScreenAndSetFullscreen(Rect? screenRect) async {
+  if (screenRect == null) {
+    return;
+  }
+  final wc = WindowController.fromWindowId(stateGlobal.windowId);
+  final curFrame = await wc.getFrame();
+  final frame =
+      Rect.fromLTWH(screenRect.left + 30, screenRect.top + 30, 600, 400);
+  if (stateGlobal.fullscreen.isTrue &&
+      curFrame.left <= frame.left &&
+      curFrame.top <= frame.top &&
+      curFrame.width >= frame.width &&
+      curFrame.height >= frame.height) {
+    return;
+  }
+  await wc.setFrame(frame);
+  // An duration is needed to avoid the window being restored after fullscreen.
+  Future.delayed(Duration(milliseconds: 300), () async {
+    stateGlobal.setFullscreen(true);
+  });
+}
+
+parseParamScreenRect(Map<String, dynamic> params) {
+  Rect? screenRect;
+  if (params['screen_rect'] != null) {
+    double l = params['screen_rect']['l'];
+    double t = params['screen_rect']['t'];
+    double r = params['screen_rect']['r'];
+    double b = params['screen_rect']['b'];
+    screenRect = Rect.fromLTRB(l, t, r, b);
+  }
+  return screenRect;
 }

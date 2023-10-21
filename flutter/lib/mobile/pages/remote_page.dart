@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -407,12 +408,15 @@ class _RemotePageState extends State<RemotePage> {
                       },
                     ),
                   ]),
-          IconButton(
-              color: Colors.white,
-              icon: Icon(Icons.expand_more),
-              onPressed: () {
-                setState(() => _showBar = !_showBar);
-              }),
+          Obx(() => IconButton(
+                color: Colors.white,
+                icon: Icon(Icons.expand_more),
+                onPressed: gFFI.ffiModel.waitForFirstImage.isTrue
+                    ? null
+                    : () {
+                        setState(() => _showBar = !_showBar);
+                      },
+              )),
         ],
       ),
     );
@@ -453,7 +457,7 @@ class _RemotePageState extends State<RemotePage> {
                     ),
             ),
           ];
-          if (!gFFI.canvasModel.cursorEmbedded) {
+          if (showCursorPaint) {
             paints.add(CursorPaint());
           }
           return paints;
@@ -462,7 +466,7 @@ class _RemotePageState extends State<RemotePage> {
 
   Widget getBodyForDesktopWithListener(bool keyboard) {
     var paints = <Widget>[ImagePaint()];
-    if (!gFFI.canvasModel.cursorEmbedded) {
+    if (showCursorPaint) {
       final cursor = bind.sessionGetToggleOptionSync(
           sessionId: sessionId, arg: 'show-remote-cursor');
       if (keyboard || cursor) {
@@ -752,14 +756,16 @@ void showOptions(
   if (image != null) {
     displays.add(Padding(padding: const EdgeInsets.only(top: 8), child: image));
   }
-  if (pi.displays.length > 1) {
+  if (pi.displays.length > 1 && pi.currentDisplay != kAllDisplayValue) {
     final cur = pi.currentDisplay;
     final children = <Widget>[];
     for (var i = 0; i < pi.displays.length; ++i) {
       children.add(InkWell(
           onTap: () {
             if (i == cur) return;
-            bind.sessionSwitchDisplay(sessionId: gFFI.sessionId, value: i);
+            gFFI.recordingModel.onClose();
+            bind.sessionSwitchDisplay(
+                sessionId: gFFI.sessionId, value: Int32List.fromList([i]));
             gFFI.dialogManager.dismissAll();
           },
           child: Ink(

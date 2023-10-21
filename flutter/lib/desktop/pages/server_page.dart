@@ -35,6 +35,7 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   void initState() {
     gFFI.ffiModel.updateEventListener(gFFI.sessionId, "");
     windowManager.addListener(this);
+    Get.put(tabController);
     tabController.onRemoved = (_, id) {
       onRemoveId(id);
     };
@@ -114,6 +115,7 @@ class ConnectionManagerState extends State<ConnectionManager> {
             });
           }
           windowManager.setTitle(getWindowNameWithId(client.peerId));
+          gFFI.cmFileModel.updateCurrentClientId(client.id);
         }
       }
     };
@@ -282,7 +284,7 @@ class ConnectionManagerState extends State<ConnectionManager> {
     } else {
       final opt = "enable-confirm-closing-tabs";
       final bool res;
-      if (!option2bool(opt, await bind.mainGetOption(key: opt))) {
+      if (!option2bool(opt, bind.mainGetLocalOption(key: opt))) {
         res = true;
       } else {
         res = await closeConfirmDialog();
@@ -475,14 +477,21 @@ class _CmHeaderState extends State<_CmHeader>
             ),
           ),
           Offstage(
-            offstage: !client.authorized || client.type_() != ClientType.remote,
+            offstage: !client.authorized ||
+                (client.type_() != ClientType.remote &&
+                    client.type_() != ClientType.file),
             child: IconButton(
-              onPressed: () => checkClickTime(
-                client.id,
-                () => gFFI.chatModel
-                    .toggleCMChatPage(MessageKey(client.peerId, client.id)),
-              ),
-              icon: SvgPicture.asset('assets/chat2.svg'),
+              onPressed: () => checkClickTime(client.id, () {
+                if (client.type_() != ClientType.file) {
+                  gFFI.chatModel.toggleCMSidePage();
+                } else {
+                  gFFI.chatModel
+                      .toggleCMChatPage(MessageKey(client.peerId, client.id));
+                }
+              }),
+              icon: SvgPicture.asset(client.type_() == ClientType.file
+                  ? 'assets/file_transfer.svg'
+                  : 'assets/chat2.svg'),
               splashRadius: kDesktopIconButtonSplashRadius,
             ),
           )

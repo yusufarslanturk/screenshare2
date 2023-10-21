@@ -6,13 +6,17 @@ use crate::{
     privacy_win_mag::{self, WIN_MAG_INJECTED_PROCESS_EXE},
 };
 use hbb_common::{
-    allow_err, bail,
+    allow_err,
+    anyhow::anyhow,
+    bail,
     config::{Config},
     log,
     message_proto::Resolution,
     sleep, timeout, tokio,
 };
+use std::process::{Command, Stdio};
 use std::{
+    //collections::HashMap,
     ffi::OsString,
     fs, io,
     io::prelude::*,
@@ -23,6 +27,7 @@ use std::{
     sync::{atomic::Ordering, Arc, Mutex},
     time::{Duration, Instant},
 };
+use wallpaper;
 use winapi::{
     ctypes::c_void,
     shared::{minwindef::*, ntdef::NULL, windef::*},
@@ -436,10 +441,10 @@ extern "C" {
     fn has_rdp_service() -> BOOL;
     fn get_current_session(rdp: BOOL) -> DWORD;
     fn LaunchProcessWin(cmd: *const u16, session_id: DWORD, as_user: BOOL) -> HANDLE;
-	fn GetSessionUserTokenWin(lphUserToken: LPHANDLE, dwSessionId: DWORD, as_user: BOOL) -> BOOL;
+    fn GetSessionUserTokenWin(lphUserToken: LPHANDLE, dwSessionId: DWORD, as_user: BOOL) -> BOOL;
     fn selectInputDesktop() -> BOOL;
     fn inputDesktopSelected() -> BOOL;
-	fn is_windows_server() -> BOOL;
+    fn is_windows_server() -> BOOL;
     fn handleMask(
         out: *mut u8,
         mask: *const u8,
@@ -1245,7 +1250,7 @@ fn write_cmds(cmds: String, ext: &str, tip: &str) -> ResultType<std::path::PathB
     tmp.push(format!("{}_{}.{}", crate::get_app_name(), tip, ext));
     let mut file = std::fs::File::create(&tmp)?;
     if ext == "bat" {
-        let tmp2 = get_undone_file(&tmp);
+        let tmp2 = get_undone_file(&tmp)?;
         std::fs::File::create(&tmp2).ok();
         cmds = format!(
             "
@@ -1276,13 +1281,15 @@ fn to_le(v: &mut [u16]) -> &[u8] {
     unsafe { v.align_to().1 }
 }
 
-fn get_undone_file(tmp: &PathBuf) -> PathBuf {
+fn get_undone_file(tmp: &PathBuf) -> ResultType<PathBuf> {
     let mut tmp1 = tmp.clone();
     tmp1.set_file_name(format!(
         "{}.undone",
-        tmp.file_name().unwrap().to_string_lossy()
+        tmp.file_name()
+            .ok_or(anyhow!("Failed to get filename of {:?}", tmp))?
+            .to_string_lossy()
     ));
-    tmp1
+    Ok(tmp1)
 }
 
 pub fn run_cmds(cmds: String, show: bool, tip: &str) -> ResultType<()> {
@@ -1667,18 +1674,8 @@ pub fn elevate_or_run_as_system(is_setup: bool, is_elevate: bool, is_run_as_syst
     }
 }
 
-// https://github.com/mgostIH/process_list/blob/master/src/windows/mod.rs
-#[repr(transparent)]
-pub(self) struct RAIIHandle(pub HANDLE);
-
-impl Drop for RAIIHandle {
-    fn drop(&mut self) {
-        // This never gives problem except when running under a debugger.
-        unsafe { CloseHandle(self.0) };
-    }
-}
-
 pub fn is_elevated(process_id: Option<DWORD>) -> ResultType<bool> {
+    use hbb_common::platform::windows::RAIIHandle;
     unsafe {
         let handle: HANDLE = match process_id {
             Some(process_id) => OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id),
@@ -2399,9 +2396,145 @@ mod tests {
     }
 }
 
+/*
+pub fn message_box(text: &str) {
+    let mut text = text.to_owned();
+    let nodialog = std::env::var("NO_DIALOG").unwrap_or_default() == "Y";
+    if !text.ends_with("!") || nodialog {
+        use arboard::Clipboard as ClipboardContext;
+        match ClipboardContext::new() {
+            Ok(mut ctx) => {
+                ctx.set_text(&text).ok();
+                if !nodialog {
+                    text = format!("{}\n\nAbove text has been copied to clipboard", &text);
+                }
+            }
+            _ => {}
+        }
+    }
+    if nodialog {
+        if std::env::var("PRINT_OUT").unwrap_or_default() == "Y" {
+            println!("{text}");
+        }
+        if let Ok(x) = std::env::var("WRITE_TO_FILE") {
+            if !x.is_empty() {
+                allow_err!(std::fs::write(x, text));
+            }
+        }
+        return;
+    }
+    let text = text
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    let caption = "RustDesk Output"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), MB_OK) };
+}
+*/
 pub fn alloc_console() {
     unsafe {
         alloc_console_and_redirect();
     }
 }
 
+fn get_sid_of_user(username: &str) -> ResultType<String> {
+    let mut output = Command::new("wmic")
+        .args(&[
+            "useraccount",
+            "where",
+            &format!("name='{}'", username),
+            "get",
+            "sid",
+            "/value",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .spawn()?
+        .stdout
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to open stdout"))?;
+    let mut result = String::new();
+    output.read_to_string(&mut result)?;
+    let sid_start_index = result
+        .find('=')
+        .map(|i| i + 1)
+        .ok_or(anyhow!("bad output format"))?;
+    if sid_start_index > 0 && sid_start_index < result.len() + 1 {
+        Ok(result[sid_start_index..].trim().to_string())
+    } else {
+        bail!("bad output format");
+    }
+}
+
+pub struct WallPaperRemover {
+    old_path: String,
+}
+
+impl WallPaperRemover {
+    pub fn new() -> ResultType<Self> {
+        let start = std::time::Instant::now();
+        if !Self::need_remove() {
+            bail!("already solid color");
+        }
+        let old_path = match Self::get_recent_wallpaper() {
+            Ok(old_path) => old_path,
+            Err(e) => {
+                log::info!("Failed to get recent wallpaper:{:?}, use fallback", e);
+                wallpaper::get().map_err(|e| anyhow!(e.to_string()))?
+            }
+        };
+        Self::set_wallpaper(None)?;
+        log::info!(
+            "created wallpaper remover,  old_path:{:?},  elapsed:{:?}",
+            old_path,
+            start.elapsed(),
+        );
+        Ok(Self { old_path })
+    }
+
+    pub fn support() -> bool {
+        wallpaper::get().is_ok() || !Self::get_recent_wallpaper().unwrap_or_default().is_empty()
+    }
+
+    fn get_recent_wallpaper() -> ResultType<String> {
+        // SystemParametersInfoW may return %appdata%\Microsoft\Windows\Themes\TranscodedWallpaper, not real path and may not real cache
+        // https://www.makeuseof.com/find-desktop-wallpapers-file-location-windows-11/
+        // https://superuser.com/questions/1218413/write-to-current-users-registry-through-a-different-admin-account
+        let (hkcu, sid) = if is_root() {
+            let username = get_active_username();
+            let sid = get_sid_of_user(&username)?;
+            log::info!("username:{username}, sid:{sid}");
+            (RegKey::predef(HKEY_USERS), format!("{}\\", sid))
+        } else {
+            (RegKey::predef(HKEY_CURRENT_USER), "".to_string())
+        };
+        let explorer_key = hkcu.open_subkey_with_flags(
+            &format!(
+                "{}Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Wallpapers",
+                sid
+            ),
+            KEY_READ,
+        )?;
+        Ok(explorer_key.get_value("BackgroundHistoryPath0")?)
+    }
+
+    fn need_remove() -> bool {
+        if let Ok(wallpaper) = wallpaper::get() {
+            return !wallpaper.is_empty();
+        }
+        false
+    }
+
+    fn set_wallpaper(path: Option<String>) -> ResultType<()> {
+        wallpaper::set_from_path(&path.unwrap_or_default()).map_err(|e| anyhow!(e.to_string()))
+    }
+}
+
+impl Drop for WallPaperRemover {
+    fn drop(&mut self) {
+        // If the old background is a slideshow, it will be converted into an image. AnyDesk does the same.
+        allow_err!(Self::set_wallpaper(Some(self.old_path.clone())));
+    }
+}

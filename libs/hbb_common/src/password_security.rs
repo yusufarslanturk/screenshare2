@@ -183,7 +183,7 @@ fn decrypt(v: &[u8]) -> Result<Vec<u8>, ()> {
 }
 
 pub fn symmetric_crypt(data: &[u8], encrypt: bool) -> Result<Vec<u8>, ()> {
-    use sodiumoxide::crypto::secretbox;
+    //use sodiumoxide::crypto::secretbox;
     use std::convert::TryInto;
 
     let mut keybuf = crate::get_uuid();

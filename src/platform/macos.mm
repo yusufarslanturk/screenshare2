@@ -64,26 +64,26 @@ extern "C" bool InputMonitoringAuthStatus(bool prompt) {
 }
 
 extern "C" bool Elevate(char* process, char** args) {
-  AuthorizationRef authRef;
-  OSStatus status;
+    AuthorizationRef authRef;
+    OSStatus status;
 
-  status = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
-                               kAuthorizationFlagDefaults, &authRef);
-  if (status != errAuthorizationSuccess) {
-    printf("Failed to create AuthorizationRef\n");
-    return false;
-  }
+    status = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
+                                kAuthorizationFlagDefaults, &authRef);
+    if (status != errAuthorizationSuccess) {
+        printf("Failed to create AuthorizationRef\n");
+        return false;
+    }
 
-  AuthorizationItem authItem = {kAuthorizationRightExecute, 0, NULL, 0};
-  AuthorizationRights authRights = {1, &authItem};
-  AuthorizationFlags flags = kAuthorizationFlagDefaults |
-                             kAuthorizationFlagInteractionAllowed |
-                             kAuthorizationFlagPreAuthorize |
-                             kAuthorizationFlagExtendRights;
-  status = AuthorizationCopyRights(authRef, &authRights, kAuthorizationEmptyEnvironment, flags, NULL);
-  if (status != errAuthorizationSuccess) {
-    printf("Failed to authorize\n");
-    return false;
+    AuthorizationItem authItem = {kAuthorizationRightExecute, 0, NULL, 0};
+    AuthorizationRights authRights = {1, &authItem};
+    AuthorizationFlags flags = kAuthorizationFlagDefaults |
+                                kAuthorizationFlagInteractionAllowed |
+                                kAuthorizationFlagPreAuthorize |
+                                kAuthorizationFlagExtendRights;
+    status = AuthorizationCopyRights(authRef, &authRights, kAuthorizationEmptyEnvironment, flags, NULL);
+    if (status != errAuthorizationSuccess) {
+        printf("Failed to authorize\n");
+        return false;
     }
 
     if (process != NULL) {

@@ -572,17 +572,10 @@ impl UI {
         is_login_wayland()
     }
 
-    fn fix_login_wayland(&mut self) {
-        fix_login_wayland()
-    }
-
     fn current_is_wayland(&mut self) -> bool {
         current_is_wayland()
     }
 
-    fn modify_default_login(&mut self) -> String {
-        modify_default_login()
-    }
 /*
     fn get_software_update_url(&self) -> String {
         get_software_update_url()
@@ -748,6 +741,9 @@ impl UI {
     fn is_2fa_enabled(&self) -> bool {
         crate::two_factor_auth::utils::is_2fa_enabled()
     }
+    fn support_remove_wallpaper(&self) -> bool {
+        support_remove_wallpaper()
+    }    
 }
 
 impl sciter::EventHandler for UI {
@@ -795,9 +791,7 @@ impl sciter::EventHandler for UI {
         fn is_installed_daemon(bool);
         fn get_error();
         fn is_login_wayland();
-        fn fix_login_wayland();
         fn current_is_wayland();
-        fn modify_default_login();
         fn get_options();
         fn get_option(String);
         fn get_local_option(String);
@@ -835,6 +829,7 @@ impl sciter::EventHandler for UI {
         fn get_langs();
         fn default_video_save_directory();
         fn handle_relay_id(String);
+        fn support_remove_wallpaper();
         fn is_2fa_enabled();
         fn requires_update();
 		fn set_version_sync();

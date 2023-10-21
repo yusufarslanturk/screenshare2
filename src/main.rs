@@ -9,6 +9,7 @@ use {
     winapi::shared::minwindef::HKEY,
     winapi::um::winnt::REG_SZ
 };
+#[cfg(feature = "standalone")]
 use std::fs::write;
 use hbb_common::{config::{Config},};
 

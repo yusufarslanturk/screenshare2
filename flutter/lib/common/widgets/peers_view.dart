@@ -138,7 +138,7 @@ class _PeersViewState extends State<_PeersView> with WindowListener {
 				mainAxisAlignment: MainAxisAlignment.center,
 				children: [
 				  SvgPicture.asset(
-					'assets/myicon.svg', // Provide the path to your SVG file
+					'assets/featured.svg', // Provide the path to your SVG file
 					height: 100, // Use height instead of size
 				  ).paddingOnly(bottom: 10),
 				  Text(
@@ -450,12 +450,21 @@ class AddressBookPeersView extends BasePeersView {
     if (selectedTags.isEmpty) {
       return true;
     }
-    for (final tag in selectedTags) {
-      if (idents.contains(tag)) {
-        return true;
+    if (gFFI.abModel.filterByIntersection.value) {
+      for (final tag in selectedTags) {
+        if (!idents.contains(tag)) {
+          return false;
+        }
       }
+      return true;
+    } else {
+      for (final tag in selectedTags) {
+        if (idents.contains(tag)) {
+          return true;
+        }
+      }
+      return false;
     }
-    return false;
   }
 }
 

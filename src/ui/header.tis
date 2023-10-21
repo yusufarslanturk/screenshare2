@@ -302,14 +302,24 @@ class Header: Reactor.Component {
     event click $(span#recording) (_, me) {
         recording = !recording;
         header.update();
-        if (recording)
-            handler.refresh_video();
-        else
-            handler.record_screen(false, display_width, display_height);
+        handler.record_status(recording);
+        // 0 is just a dummy value. It will be ignored by the handler.
+        if (recording) {
+            handler.refresh_video(0);
+            if (handler.version_cmp(pi.version, '1.40.8') >= 0) handler.record_screen(recording, pi.current_display, display_width, display_height);
+        }
+        else {
+            handler.record_screen(recording, pi.current_display, display_width, display_height);
+        }
     }
 
     event click $(#screen) (_, me) {
         if (pi.current_display == me.index) return;
+        if (recording) {
+            recording = false;
+            handler.record_screen(false, pi.current_display, display_width, display_height);
+            handler.record_status(false);
+        }
         handler.switch_display(me.index);
     }
 
