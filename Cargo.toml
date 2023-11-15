@@ -1,6 +1,6 @@
 [package]
 name = "hoptodesk"
-version = "1.40.8"
+version = "1.40.9"
 authors = ["hoptodesk <info@hoptodesk.com>"]
 edition = "2021"
 build= "build.rs"
@@ -42,7 +42,7 @@ lazy_static = "1.4"
 sha2 = "0.10"
 repng = "0.2"
 parity-tokio-ipc = { git = "https://github.com/open-trade/parity-tokio-ipc" }
-runas = "1.0"
+runas = "=1.0" # https://github.com/mitsuhiko/rust-runas/issues/13
 magnum-opus = { git = "https://github.com/rustdesk/magnum-opus" }
 dasp = { version = "0.11", features = ["signal", "interpolate-linear", "interpolate"], optional = true }
 rubato = { version = "0.12", optional = true }
@@ -58,7 +58,7 @@ default-net = "0.14"
 wol-rs = "1.0"
 flutter_rust_bridge = { version = "1.75", features = ["uuid"], optional = true}
 errno = "0.3"
-rdev = { git = "https://github.com/fufesou/rdev" }
+rdev = { git = "https://github.com/fufesou/rdev", branch = "master" }
 url = { version = "2.3", features = ["serde"] }
 crossbeam-queue = "0.3"
 hex = "0.4"
@@ -155,7 +155,7 @@ members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "lib
 exclude = ["vdi/host", "examples/custom_plugin"]
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2023 Begonia Holdings.  Copyright © 2022 Purslane, Inc."
+LegalCopyright = "Copyright © 2023 Begonia Holdings.  Copyright © 2023 Purslane, Inc."
 # this FileDescription overrides package.description
 FileDescription = "HopToDesk"
 ProductName = "HopToDesk"

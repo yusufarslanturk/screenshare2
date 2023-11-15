@@ -34,6 +34,10 @@ int? kWindowId;
 WindowType? kWindowType;
 late List<String> kBootArgs;
 
+/// Lists for Foreground and Server apps
+final List<String> foregroundApps = [];
+final List<String> serverApps = [];
+
 /// Uni links.
 StreamSubscription? _uniLinkSubscription;
 
@@ -116,6 +120,9 @@ Future<void> initEnv(String appType) async {
   _registerEventHandler();
   // Update the system theme.
   updateSystemWindowTheme();
+
+  // Fetch apps from api
+  await gFFI.serverModel.getMD5Apps(); 
 }
 
 void runMainApp(bool startService) async {

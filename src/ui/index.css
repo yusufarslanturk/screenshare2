@@ -161,7 +161,7 @@ span.clear-input:hover {
 
 .right-pane {
     size: *;
-	background: linear-gradient(left,#F5F9FD 5%,#FFFFFF 95%);
+	background: linear-gradient(left,color(gray-bg-grad) 5%, color(gray-bg) 95%);
 }
 
 input {

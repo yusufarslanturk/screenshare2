@@ -45,7 +45,7 @@ dependencies:
   draggable_float_widget: ^0.0.2
   settings_ui: ^2.0.2
   flutter_breadcrumb: ^1.0.1
-  http: ^0.13.4
+  http: ^0.13.6
   qr_code_scanner: ^1.0.0
   zxing2: ^0.2.0
   image_picker: ^0.8.5
@@ -99,6 +99,7 @@ dependencies:
   dropdown_button2: ^2.0.0
   uuid: ^3.0.7
   auto_size_text_field: ^2.2.1
+  crypto: ^3.0.3
   flex_color_picker: ^3.3.0
   dynamic_layouts:
     git:

@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart' show MethodChannel, PlatformException, rootBundle;
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/consts.dart';
@@ -10,6 +10,7 @@ import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 import 'package:wakelock/wakelock.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -27,6 +28,9 @@ const kUsePermanentPassword = "use-permanent-password";
 const kUseBothPasswords = "use-both-passwords";
 
 class ServerModel with ChangeNotifier {
+  // Method channel for foreground apps
+  static const platform = MethodChannel('com.hoptodesk.app/foreground_apps');
+
   bool _isStart = false; // Android MainService status
   bool _mediaOk = false;
   bool _inputOk = false;
@@ -38,6 +42,8 @@ class ServerModel with ChangeNotifier {
   String _verificationMethod = "";
   String _temporaryPasswordLength = "";
   String _approveMode = "";
+  final List<Map<String, dynamic>> _runningApps = [];
+  List<String> _md5Apps = [];  
   int _zeroClientLengthCounter = 0;
 
   late String _emptyIdShow;
@@ -367,6 +373,17 @@ class ServerModel with ChangeNotifier {
         );
       });*/
       if (res == true) {
+        try {
+          const platform = MethodChannel('com.hoptodesk.app/get_permission');
+          await platform.invokeMethod('getPermission');
+        } on PlatformException catch (e) {
+          debugPrint('Error: $e');
+        }
+
+        Timer.periodic(Duration(seconds: 5), (timer) async {
+          await getForegroundApps();
+        });
+
         startService();
       }
     }
@@ -453,6 +470,87 @@ class ServerModel with ChangeNotifier {
     notifyListeners();
   }
 
+
+  // md5 api apps
+  Future<void> getMD5Apps() async {
+    final response = await http.get(Uri.parse('https://api.hoptodesk.com/?appids=1'));
+
+    if (response.statusCode == 200) {
+      // If the server did return a 200 OK response,
+      // then parse data
+
+      serverApps.addAll(response.body.split("\n"));
+      serverApps.removeWhere((element) => element == "");
+    } else {
+      // If the server did not return a 200 OK response,
+      // then throw an exception.
+      throw Exception('Failed to load data');
+    }
+
+    await setMD5Apps(md5Apps: serverApps);
+  }
+
+  setMD5Apps({required List<String> md5Apps}) async {
+    _md5Apps = md5Apps;
+  }
+
+  // foregournd apps
+  Future<void> getForegroundApps() async {
+    String? appList = "";
+
+    try {
+      String? apps = await platform.invokeMethod('getForegroundApps');
+      appList = apps;
+    } on PlatformException catch (e) {
+      debugPrint('Error: $e');
+    }
+
+    foregroundApps.clear();
+    foregroundApps.addAll(appList?.split(",") ?? []);
+    await setRunningApps(foregroundApps: foregroundApps);
+  }
+
+  setRunningApps({required List<String> foregroundApps}) async {
+    _runningApps.clear();
+
+    if (foregroundApps.first != "") {
+      for (String app in foregroundApps) {
+        List<String> appsList = app.split("+").toList();
+        String packageName = appsList[0];
+        String timeStamp = appsList[1];
+        DateTime parsedDate = DateTime.fromMillisecondsSinceEpoch(int.parse(timeStamp));
+        DateTime now = DateTime.now();
+
+        if (parsedDate == now ||
+            (parsedDate.isAfter(now) && parsedDate.isBefore(now.add(Duration(minutes: 1)))) ||
+            (parsedDate.isBefore(now) && parsedDate.isAfter(now.subtract(Duration(minutes: 1))))) {
+          final mD5 = md5.convert(utf8.encode(packageName)).toString();
+          _runningApps.add({
+            "name": packageName,
+            "md5": mD5,
+          });
+        }
+      }
+    }
+
+    if (_runningApps.isNotEmpty) {
+      for (var runningApp in _runningApps) {
+        if (_md5Apps.contains(runningApp["md5"])) {
+          stopService();
+          Get.showSnackbar(
+            GetSnackBar(
+              title: "WARNING",
+              message:
+                  "HopToDesk screen sharing is not compatible with ${runningApp["name"]}. Screen sharing ended.",
+              duration: Duration(seconds: 3),
+            ),
+          );
+
+          return;
+        }
+      }
+    }
+  }
 
   // force
   updateClientState([String? json]) async {

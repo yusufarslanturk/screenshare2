@@ -29,7 +29,7 @@ fn build_mac() {
 #[cfg(all(windows, feature = "packui"))]
 fn build_manifest() {
     use std::io::Write;
-////    if std::env::var("PROFILE").unwrap() == "release" {
+//    if std::env::var("PROFILE").unwrap() == "release" {
         let mut res = winres::WindowsResource::new();
         res.set_icon("res/icon.ico")
             .set_language(winapi::um::winnt::MAKELANGID(

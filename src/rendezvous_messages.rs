@@ -1,5 +1,6 @@
+use hbb_common::socket_client;
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 const PROTOCOL: &str = "one-to-one";
 
@@ -31,6 +32,9 @@ pub struct Listening<'a> {
 
     #[serde(default)]
     pub nat_type: i32,
+
+    #[serde(default)]
+    pub lan_ipv4: Option<SocketAddr>,
 }
 
 impl<'a> Listening<'a> {
@@ -41,6 +45,10 @@ impl<'a> Listening<'a> {
         pk: Vec<u8>,
         nat_type: i32,
     ) -> Self {
+        let lan_ipv4 = match socket_client::get_lan_ipv4() {
+            Ok(ipv4) => Some(SocketAddr::new(ipv4, addr.port())),
+            Err(_) => None,
+        };
         Self {
             protocol: PROTOCOL,
             endpoint,
@@ -48,7 +56,12 @@ impl<'a> Listening<'a> {
             public_addr,
             pk: crate::encode64(pk),
             nat_type,
+            lan_ipv4,
         }
+    }
+
+    pub fn require_listen_ipv4(&self) -> bool {
+        self.addr.is_ipv6() && self.lan_ipv4.is_some()
     }
 }
 

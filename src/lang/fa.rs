@@ -183,7 +183,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Allow using keyboard and mouse", "مجاز بودن استفاده از صفحه کلید و ماوس"),
         ("Allow using clipboard", "مجاز بودن استفاده از کلیپبورد"),
         ("Allow hearing sound", "مجاز بودن شنیدن صدا"),
-        ("Allow file copy and paste", "مجاز بودن کپی و چسباندن فایل"),
+        ("Enable file copy and paste", "مجاز بودن کپی و چسباندن فایل"),
         ("Connected", "متصل شده"),
         ("Direct and encrypted connection", "اتصال مستقیم و رمزگذاری شده"),
         ("Relayed and encrypted connection", "و رمزگذاری شده Relay اتصال از طریق"),

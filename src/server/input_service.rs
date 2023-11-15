@@ -1,8 +1,6 @@
 use super::*;
 #[cfg(target_os = "macos")]
 use crate::common::is_server;
-#[cfg(target_os = "linux")]
-use crate::common::IS_X11;
 use crate::input::*;
 #[cfg(target_os = "macos")]
 use dispatch::Queue;
@@ -411,7 +409,6 @@ pub fn try_stop_record_cursor_pos() {
 #[cfg(target_os = "macos")]
 lazy_static::lazy_static! {
     static ref QUEUE: Queue = Queue::main();
-    static ref IS_SERVER: bool =  std::env::args().nth(1) == Some("--server".to_owned());
 }
 
 #[cfg(target_os = "macos")]
@@ -541,7 +538,7 @@ fn get_modifier_state(key: Key, en: &mut Enigo) -> bool {
 
 pub fn handle_mouse(evt: &MouseEvent, conn: i32) {
     #[cfg(target_os = "macos")]
-    if !*IS_SERVER {
+    if !is_server() {
         // having GUI, run main GUI thread, otherwise crash
         let evt = evt.clone();
         QUEUE.exec_async(move || handle_mouse_(&evt, conn));
@@ -726,7 +723,6 @@ pub fn update_latest_input_cursor_time(conn: i32) {
     lock.conn = conn;
     lock.time = get_time();
 }
-
 /*
 #[inline]
 fn get_last_input_cursor_pos() -> (i32, i32) {
@@ -734,8 +730,6 @@ fn get_last_input_cursor_pos() -> (i32, i32) {
     (lock.x, lock.y)
 }
 */
-
-// check if mouse is moved by the controlled side user to make controlled side has higher mouse priority than remote.
 // check if mouse is moved by the controlled side user to make controlled side has higher mouse priority than remote.
 fn active_mouse_(conn: i32) -> bool {
     true
@@ -794,7 +788,6 @@ fn active_mouse_(conn: i32) -> bool {
     }
     */
 }
-
 
 pub fn handle_pointer_(evt: &PointerDeviceEvent, conn: i32) {
     if !active_mouse_(conn) {
@@ -1022,7 +1015,7 @@ pub async fn lock_screen() {
 
 pub fn handle_key(evt: &KeyEvent) {
     #[cfg(target_os = "macos")]
-    if !*IS_SERVER {
+    if !is_server() {
         // having GUI, run main GUI thread, otherwise crash
         let evt = evt.clone();
         QUEUE.exec_async(move || handle_key_(&evt));
@@ -1048,7 +1041,7 @@ fn reset_input() {
 
 #[cfg(target_os = "macos")]
 pub fn reset_input_ondisconn() {
-    if !*IS_SERVER {
+    if !is_server() {
         QUEUE.exec_async(reset_input);
     } else {
         reset_input();
@@ -1157,7 +1150,7 @@ fn map_keyboard_mode(evt: &KeyEvent) {
 
     // Wayland
     #[cfg(target_os = "linux")]
-    if !*IS_X11 {
+    if !crate::platform::linux::is_x11() {
         let mut en = ENIGO.lock().unwrap();
         let code = evt.chr() as u16;
 

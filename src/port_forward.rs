@@ -116,7 +116,7 @@ async fn connect_and_login(
         ConnType::PORT_FORWARD
     };
     let (mut stream, relay, ..) = Client::start(id, conn_type).await?;
-    let mut interface = interface;
+    let interface = interface;
     let mut buffer = Vec::new();
     loop {
         tokio::select! {

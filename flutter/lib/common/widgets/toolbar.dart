@@ -471,7 +471,8 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         child: Text(translate('Lock after session end'))));
   }
   // privacy mode
-  if (ffiModel.keyboard && pi.features.privacyMode) {
+  //if (ffiModel.keyboard && pi.features.privacyMode) {
+  if (ffiModel.keyboard) {
     final option = 'privacy-mode';
     final rxValue = PrivacyModeState.find(id);
     v.add(TToggleMenu(

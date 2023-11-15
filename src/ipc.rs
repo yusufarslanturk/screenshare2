@@ -182,6 +182,7 @@ pub enum Data {
         file_transfer_enabled: bool,
         restart: bool,
         recording: bool,
+        block_input: bool,
         from_switch: bool,        
         security_numbers: String,
         avatar_image: String,
@@ -246,7 +247,7 @@ pub enum Data {
     Plugin(Plugin),
     #[cfg(windows)]
     SyncWinCpuUsage(Option<f64>),
-    FileTransferLog(String),
+    FileTransferLog((String, String)),
     #[cfg(windows)]
     ControlledSessionCount(usize),
 }
@@ -422,6 +423,8 @@ async fn handle(data: Data, stream: &mut Connection) {
                     value = Config::get_rendezvous_servers()
                         .await
                         .and_then(|v| Some(v.join(",")));
+                } else if name == "hide_cm" {
+                    value = None;
                 } else if name == "custom-api-url" {
                     value = Some(get_option_async(&name).await)
                 } else {
@@ -611,7 +614,7 @@ async fn check_pid(postfix: &str) {
         file.read_to_string(&mut content).ok();
         let pid = content.parse::<usize>().unwrap_or(0);
         if pid > 0 {
-            use hbb_common::sysinfo::{ProcessExt, System, SystemExt};
+            use hbb_common::sysinfo::{System};
             let mut sys = System::new();
             sys.refresh_processes();
             if let Some(p) = sys.process(pid.into()) {

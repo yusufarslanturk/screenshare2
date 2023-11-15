@@ -1,16 +1,16 @@
-use std::{
-    net::{SocketAddr},
-    sync::atomic::{AtomicBool, Ordering},
-    time::Instant, 
-};
 use futures::{SinkExt, StreamExt};
+use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 use tokio::net::TcpStream;
 //use tokio_tungstenite::Connector::NativeTls;
 use tokio_tungstenite::{tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 
 use hbb_common::{
     allow_err,
-    anyhow::{bail},
+    anyhow::bail,
     config::{Config, CONNECT_TIMEOUT, RENDEZVOUS_PORT},
     futures::future::join_all,
     log,
@@ -26,8 +26,7 @@ use hbb_common::{
 use crate::{
     rendezvous_messages::{self, ToJson},
     server::{check_zombie, new as new_server, ServerPtr},
-    turn_client,
-    ui_interface,
+    turn_client, ui_interface,
 };
 
 use std::fs;
@@ -90,12 +89,8 @@ impl RendezvousMediator {
                 }
             }
 
-
             sleep(1.).await;
         }
-
-	
-	
     }
 
     pub async fn start(server: ServerPtr, host_list: String) -> ResultType<()> {
@@ -105,7 +100,7 @@ impl RendezvousMediator {
             Some(addr) => addr,
             None => bail!("Failed to retreive public IP address"),
         };
-		
+
         let (local_ip, host, websocket_client) = create_websocket(&host_list).await?;
 
         let (mut sender, receiver) = websocket_client.split();
@@ -118,12 +113,12 @@ impl RendezvousMediator {
 
         const TIMER_OUT: Duration = Duration::from_secs(1);
         let mut last_timer = Instant::now();
-		let mut last_log = Instant::now();
+        let mut last_log = Instant::now();
         let mut timer = interval(TIMER_OUT);
 
         let mut last_healthcheck_sent = None;
         let mut last_data_received = chrono::Utc::now();
-		
+
         let socket_packets = futures::stream::unfold(receiver, move |mut receiver| async {
             match receiver.next().await {
                 Some(Ok(msg)) => Some((Ok(msg), receiver)),
@@ -131,13 +126,16 @@ impl RendezvousMediator {
                 None => None,
             }
         });
-			
-		#[cfg(not(any(target_os = "android", target_os = "ios")))]
+
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
             let mut body = String::new();
             let myid = Config::get_id();
             file.read_to_string(&mut body)?;
-			let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}",body, myid))
+            let _res = reqwest::get(&format!(
+                "https://api.hoptodesk.com/?teamid={}&id={}",
+                body, myid
+            ))
             .await?
             .text()
             .await?;
@@ -161,36 +159,36 @@ impl RendezvousMediator {
                             log::info!("Server is unresponding, disconnect.");
                             break;
                         }
-                    } 
-					if now_utc - last_data_received > chrono::Duration::seconds(90) {
+                    }
+                    if now_utc - last_data_received > chrono::Duration::seconds(90) {
                         log::info!("Sending healthcheck.");
                         if let Err(error) = sender.send(WsMessage::Text(HEALTHCHECK.to_owned())).await {
                             log::info!("Send error: {error}, disconnect.");
                             break;
                         };
 
-						last_healthcheck_sent = Some(chrono::Utc::now());
+                        last_healthcheck_sent = Some(chrono::Utc::now());
                     }
-					
-					if (now - last_log).as_secs() >= 30 {
-						#[cfg(not(any(target_os = "android", target_os = "ios")))]
+
+                    if (now - last_log).as_secs() >= 30 {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
-							let mut body = String::new();
+                            let mut body = String::new();
                             let myid = Config::get_id();
                             file.read_to_string(&mut body)?;
-							let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", body, myid)).await?.text().await?;
-							
-							match crate::ipc::connect(1000, "_cm").await {
-								Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: body }).await {
-									log::error!("Failed to list sessions: {}", e);
-								}
-								Err(e) => {}
-								//Err(e) => log::error!("Can't connect to IPC: {}", e)
-							}
+                            let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", body, myid)).await?.text().await?;
+
+                            match crate::ipc::connect(1000, "_cm").await {
+                                Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: body }).await {
+                                    log::error!("Failed to list sessions: {}", e);
+                                }
+                                Err(_e) => {}
+                                //Err(e) => log::error!("Can't connect to IPC: {}", e)
+                            }
                         }
-						last_log = now;
-					}
-	
+                        last_log = now;
+                    }
+
                 }
                 Some(data) = socket_packets.next() => {
                     match data {
@@ -223,44 +221,53 @@ impl RendezvousMediator {
                             let listener =
                                 hbb_common::tcp::new_listener(SocketAddr::new(local_ip, 0), true)
                                 .await?;
-                            let nat_type = Config::get_nat_type();
+                                let nat_type = Config::get_nat_type();
 
-                            let result = sender
-                                .send(
-                                    tokio_tungstenite::tungstenite::Message::Text(rendezvous_messages::Listening::new(
-                                        connect_request.sender_id,
-                                        listener.local_addr().unwrap(),
-                                        public_addr,
-                                        Config::get_key_pair().1,
-                                        nat_type,
+                                let listening = rendezvous_messages::Listening::new(
+                                    connect_request.sender_id,
+                                    listener.local_addr().unwrap(),
+                                    public_addr,
+                                    Config::get_key_pair().1,
+                                    nat_type,
+                                );
+                                let result = sender
+                                    .send(
+                                        tokio_tungstenite::tungstenite::Message::Text(listening.to_json()),
                                     )
-                                    .to_json()),
-                                )
-                                .await;
-                            match result {
+                                    .await;
+                                match result {
                                 Ok(_) => {
                                     let server_clone = server.clone();
                                     tokio::spawn(async move {
                                         if let Err(error) = crate::accept(listener, server_clone, true).await {
                                             log::error!("accept() failed: {:?}", error);
                                         }
-                                    });
+                                        });
+                                        if listening.require_listen_ipv4() {
+                                            let ipv4_listener = hbb_common::tcp::new_listener(listening.lan_ipv4.unwrap(), true).await?;
+                                            let server_clone = server.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(error) = crate::accept(ipv4_listener, server_clone, true).await {
+                                                    log::error!("accept() failed: {:?}", error);
+                                                }
+                                            });
+                                        }
+                                    }
+                                    Err(error) => {
+                                        log::error!("WS send failed: {:?}", error);
+                                    }
                                 }
-                                Err(error) => {
-                                    log::error!("WS send failed: {:?}", error);
-                                }
-                            }
-                        } else if let Ok(relay_connection) =
-							serde_json::from_str::<rendezvous_messages::RelayConnection>(&msg)
+                            } else if let Ok(relay_connection) =
+                            serde_json::from_str::<rendezvous_messages::RelayConnection>(&msg)
                         {
-							last_data_received = chrono::Utc::now();
+                            last_data_received = chrono::Utc::now();
                             if let Ok(stream) = socket_client::connect_tcp(
                                 relay_connection.addr,
                                 //Config::get_any_listen_addr(true),
                                 CONNECT_TIMEOUT,
                             ).await
                             {
-								match tokio::time::timeout_at(tokio::time::Instant::now() + Duration::from_secs(10), socket_packets.next()).await {
+                                match tokio::time::timeout_at(tokio::time::Instant::now() + Duration::from_secs(10), socket_packets.next()).await {
                                     Ok(data) => {
                                         if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(msg))) = data {
                                             if let Ok(_) = serde_json::from_str::<rendezvous_messages::RelayReady,>(&msg){
@@ -289,9 +296,9 @@ impl RendezvousMediator {
                             break;
                         }
                     }
-					Err(e) => bail!("Failed to receive next {}", e),
+                    Err(e) => bail!("Failed to receive next {}", e),
                     _ => bail!("Received binary message from signal server"),
-					}
+                    }
                 }
             }
         }

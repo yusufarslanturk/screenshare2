@@ -312,6 +312,7 @@ class MyIdMenu: Reactor.Component {
                 <DirectServer />
 				<li #show-settings-button style="display:none">{show_settings_button ? translate("Hide Settings Button") : translate("Show Settings Button")}</li>
                 <div .separator />
+                <li #allow-darktheme><span>{svg_checkmark}</span>{translate('Dark Theme')}</li>
                 <Languages />
                 <li #about title={translate('About')}>{translate('About')} {" "} {handler.get_app_name()}</li>
             </menu>
@@ -378,6 +379,7 @@ class MyIdMenu: Reactor.Component {
         var name = handler.get_app_name();
             msgbox("custom-nocancel-nook-hasclose", translate('About') + " " + name, "<div style='line-height: 2em'> \
                 <div>Version: " + handler.get_version() + " \
+                <div>TeamID: " + handler.get_teamid() + " \
             </div>
 			<div style='font-size: 13px; color: #000; text-decoration: none;'>
 				<div .link .custom-event url='https://www.hoptodesk.com'>Website</div> \

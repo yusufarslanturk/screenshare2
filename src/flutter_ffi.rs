@@ -966,6 +966,25 @@ pub fn main_load_recent_peers_sync() -> SyncReturn<String> {
     SyncReturn("".to_string())
 }
 
+pub fn main_load_lan_peers_sync() -> SyncReturn<String> {
+    let data = HashMap::from([
+        ("name", "load_lan_peers".to_owned()),
+        (
+            "peers",
+            serde_json::to_string(&get_lan_peers()).unwrap_or_default(),
+        ),
+    ]);
+    return SyncReturn(serde_json::ser::to_string(&data).unwrap_or("".to_owned()));
+}
+
+pub fn main_load_ab_sync() -> SyncReturn<String> {
+    return SyncReturn(serde_json::to_string(&config::Ab::load()).unwrap_or_default());
+}
+
+pub fn main_load_group_sync() -> SyncReturn<String> {
+    return SyncReturn(serde_json::to_string(&config::Group::load()).unwrap_or_default());
+}
+
 pub fn main_load_recent_peers_for_ab(filter: String) -> String {
     let id_filters = serde_json::from_str::<Vec<String>>(&filter).unwrap_or_default();
     let id_filters = if id_filters.is_empty() {
@@ -1519,6 +1538,21 @@ pub fn cm_switch_back(conn_id: i32) {
     crate::ui_cm_interface::switch_back(conn_id);
 }
 
+pub fn cm_get_config(name: String) -> String {
+    #[cfg(not(target_os = "ios"))]
+    {
+        if let Ok(Some(v)) = crate::ipc::get_config(&name) {
+            v
+        } else {
+            "".to_string()
+        }
+    }
+    #[cfg(target_os = "ios")]
+    {
+        "".to_string()
+    }
+}
+
 pub fn main_get_build_date() -> String {
     crate::BUILD_DATE.to_string()
 }
@@ -1759,6 +1793,17 @@ pub fn send_url_scheme(_url: String) {
 
 pub fn is_support_multi_ui_session(version: String) -> SyncReturn<bool> {
     SyncReturn(crate::common::is_support_multi_ui_session(&version))
+}
+
+pub fn is_selinux_enforcing() -> SyncReturn<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        SyncReturn(crate::platform::linux::is_selinux_enforcing())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        SyncReturn(false)
+    }
 }
 
 #[cfg(target_os = "android")]

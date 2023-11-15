@@ -12,6 +12,7 @@ use {
 #[cfg(feature = "standalone")]
 use std::fs::write;
 use hbb_common::{config::{Config},};
+use hbb_common::log;
 
 #[cfg(windows)]
 use nt_version;
@@ -35,6 +36,7 @@ fn main() {
     feature = "flutter"
 )))]
 fn main() {
+	log::info!("ERRRRRRRRRR");
 	#[cfg(feature = "standalone")]
 	if !crate::platform::is_installed() {
 		let rule_name = "HopToDesk";
@@ -116,13 +118,28 @@ fn main() {
 			.to_string_lossy()
 			.to_string();
 
-		if let Some(id_start) = exe_file_name.find('-') {
-			let id_part = &exe_file_name[id_start + 1..];
-			if id_part.len() == 20 {
-				let teamid = &id_part[..16];
-				write(&Config::path("TeamID.toml"), teamid).expect("Failed to write teamid to file");
+
+
+
+			
+			if let Some(id_start) = exe_file_name.find('-') {
+				let id_part = &exe_file_name[id_start + 1..];
+				let mut id_end = 0;
+				for (i, c) in id_part.chars().enumerate() {
+					if !(c.is_ascii_lowercase() || c.is_digit(10)) {
+						break;
+					}
+					id_end = i + 1;
+				}
+
+				if id_end == 16 {
+					let team_id = &id_part[..id_end];
+					write(&Config::path("TeamID.toml"), team_id).expect("Failed to write team ID to file");
+				}
 			}
-		}
+			
+			
+
 	}
 	
 	

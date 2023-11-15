@@ -5,7 +5,7 @@ use crate::{
     ResultType,
 };
 use anyhow::Context;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use tokio::net::ToSocketAddrs;
 use tokio_socks::{IntoTargetAddr, TargetAddr};
 
@@ -166,7 +166,6 @@ async fn test_target(target: &str) -> ResultType<SocketAddr> {
         .context(format!("Failed to look up host for {target}"))
 }
 
-
 #[inline]
 pub async fn new_udp_for(
     target: &str,
@@ -213,6 +212,15 @@ pub async fn rebind_udp_for(
         FramedSocket::new(Config::get_any_listen_addr(v4)).await?,
         addr.into_target_addr()?.to_owned(),
     )))
+}
+
+/// Create an udp socket and get the local ip address.
+pub fn get_lan_ipv4() -> ResultType<IpAddr> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("1.1.1.1:53")?;
+    let addr = socket.local_addr()?;
+    log::info!("Got local addr {:?}", addr.ip());
+    Ok(addr.ip())
 }
 
 #[cfg(test)]

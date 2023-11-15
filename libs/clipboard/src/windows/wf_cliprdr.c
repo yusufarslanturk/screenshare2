@@ -1371,7 +1371,7 @@ static UINT cliprdr_send_format_list(wfClipboard *clipboard, UINT32 connID)
 	{
 		return ERROR_SUCCESS;
 	}
-	
+
 	ZeroMemory(&formatList, sizeof(CLIPRDR_FORMAT_LIST));
 
 	/* Ignore if other app is holding clipboard */

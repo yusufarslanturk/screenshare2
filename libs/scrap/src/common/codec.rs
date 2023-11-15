@@ -13,7 +13,7 @@ use crate::mediacodec::{
 use crate::{
     common::GoogleImage,
     vpxcodec::{self, VpxDecoder, VpxDecoderConfig, VpxEncoder, VpxEncoderConfig, VpxVideoCodecId},
-    CodecName, ImageRgb,
+    CodecName, EncodeYuvFormat, ImageRgb,
 };
 
 use hbb_common::{
@@ -22,10 +22,10 @@ use hbb_common::{
     config::PeerConfig,
     log,
     message_proto::{
-        supported_decoding::PreferCodec, video_frame, EncodedVideoFrames,
+        supported_decoding::PreferCodec, video_frame, CodecAbility, EncodedVideoFrames,
         SupportedDecoding, SupportedEncoding, VideoFrame,
     },
-    sysinfo::{System, SystemExt},
+    sysinfo::{System},
     tokio::time::Instant,
     ResultType,
 };
@@ -54,13 +54,13 @@ pub enum EncoderCfg {
 }
 
 pub trait EncoderApi {
-    fn new(cfg: EncoderCfg) -> ResultType<Self>
+    fn new(cfg: EncoderCfg, i444: bool) -> ResultType<Self>
     where
         Self: Sized;
 
     fn encode_to_message(&mut self, frame: &[u8], ms: i64) -> ResultType<VideoFrame>;
 
-    fn use_yuv(&self) -> bool;
+    fn yuvfmt(&self) -> EncodeYuvFormat;
 
     fn set_quality(&mut self, quality: Quality) -> ResultType<()>;
 
@@ -104,15 +104,18 @@ pub enum EncodingUpdate {
 }
 
 impl Encoder {
-    pub fn new(config: EncoderCfg) -> ResultType<Encoder> {
-        log::info!("new encoder:{:?}", config);
+    pub fn new(config: EncoderCfg, i444: bool) -> ResultType<Encoder> {
+        log::info!("new encoder:{config:?}, i444:{i444}");
         match config {
             EncoderCfg::VPX(_) => Ok(Encoder {
-                codec: Box::new(VpxEncoder::new(config)?),
+                codec: Box::new(VpxEncoder::new(config, i444)?),
             }),
+            /*EncoderCfg::AOM(_) => Ok(Encoder {
+                codec: Box::new(AomEncoder::new(config, i444)?),
+            }),*/
 
             #[cfg(feature = "hwcodec")]
-            EncoderCfg::HW(_) => match HwEncoder::new(config) {
+            EncoderCfg::HW(_) => match HwEncoder::new(config, i444) {
                 Ok(hw) => Ok(Encoder {
                     codec: Box::new(hw),
                 }),
@@ -187,7 +190,6 @@ impl Encoder {
 
         #[allow(unused_mut)]
         let mut auto_codec = CodecName::VP9;
-        #[cfg(not(any(target_os = "android", target_os = "ios", target_pointer_width = "32")))]
         if vp8_useable && System::new_all().total_memory() <= 4 * 1024 * 1024 * 1024 {
             // 4 Gb
             auto_codec = CodecName::VP8
@@ -227,6 +229,23 @@ impl Encoder {
             encoding.h265 = best.h265.is_some();
         }
         encoding
+    }
+
+    pub fn use_i444(config: &EncoderCfg) -> bool {
+        false
+/*        let decodings = PEER_DECODINGS.lock().unwrap().clone();
+        let prefer_i444 = decodings
+            .iter()
+            .all(|d| d.1.prefer_chroma == Chroma::I444.into());
+        let i444_useable = match config {
+            EncoderCfg::VPX(vpx) => match vpx.codec {
+                VpxVideoCodecId::VP8 => false,
+                VpxVideoCodecId::VP9 => decodings.iter().all(|d| d.1.i444.vp9),
+            },
+            EncoderCfg::AOM(_) => decodings.iter().all(|d| d.1.i444.av1),
+            EncoderCfg::HW(_) => false,
+        };
+        prefer_i444 && i444_useable && !decodings.is_empty()*/
     }
 }
 

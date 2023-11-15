@@ -36,9 +36,9 @@ pub(crate) const APP_TYPE_CM: &str = "cm";
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub(crate) const APP_TYPE_CM: &str = "main";
 
-pub(crate) const APP_TYPE_DESKTOP_REMOTE: &str = "remote";
-pub(crate) const APP_TYPE_DESKTOP_FILE_TRANSFER: &str = "file transfer";
-pub(crate) const APP_TYPE_DESKTOP_PORT_FORWARD: &str = "port forward";
+//pub(crate) const APP_TYPE_DESKTOP_REMOTE: &str = "remote";
+//pub(crate) const APP_TYPE_DESKTOP_FILE_TRANSFER: &str = "file transfer";
+//pub(crate) const APP_TYPE_DESKTOP_PORT_FORWARD: &str = "port forward";
 pub type FlutterSession = Arc<Session<FlutterHandler>>;
 
 lazy_static::lazy_static! {
@@ -647,12 +647,12 @@ impl InvokeUiSession for FlutterHandler {
     fn set_peer_info(&self, pi: &PeerInfo) {
 		let displays = Self::make_displays_msg(&pi.displays);
         let mut features: HashMap<&str, i32> = Default::default();
-        for ref f in pi.features.iter() {
+		for ref f in pi.features.iter() {
             features.insert("privacy_mode", if f.privacy_mode { 1 } else { 0 });
         }
         // compatible with 1.40.4
         //if get_version_number(&pi.version) < get_version_number("1.40.4") {
-			features.insert("privacy_mode", 0);
+			features.insert("privacy_mode", 1);
         //}
         let features = serde_json::ser::to_string(&features).unwrap_or("".to_owned());
         let resolutions = serialize_resolutions(&pi.resolutions.resolutions);
@@ -691,6 +691,13 @@ impl InvokeUiSession for FlutterHandler {
             "sync_peer_info",
             vec![("displays", &Self::make_displays_msg(displays))],
         );
+    }
+
+    fn set_platform_additions(&self, data: &str) {
+        self.push_event(
+            "sync_platform_additions",
+            vec![("platform_additions", &data)],
+        )
     }
 
     fn on_connected(&self, _conn_type: ConnType) {}
@@ -929,8 +936,8 @@ pub fn session_start_(
 
             let session = (*session).clone();
             std::thread::spawn(move || {
-                //let round = session.connection_round_state.lock().unwrap().new_round();
-                io_loop(session);
+                let round = session.connection_round_state.lock().unwrap().new_round();
+                io_loop(session, round);
             });
         }
         Ok(())

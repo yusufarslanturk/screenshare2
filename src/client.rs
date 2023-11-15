@@ -1,11 +1,14 @@
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::Deref,
     str::FromStr,
     sync::{
         //atomic::{AtomicUsize, Ordering},
-        mpsc, Arc, Mutex, RwLock,
+        mpsc,
+        Arc,
+        Mutex,
+        RwLock,
     },
     time::UNIX_EPOCH,
 };
@@ -23,9 +26,9 @@ use magnum_opus::{Channels::*, Decoder as AudioDecoder};
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 use ringbuf::{ring_buffer::RbBase, Rb};
 use sha2::{Digest, Sha256};
+use std::fs;
 use tokio_tungstenite::{tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use uuid::Uuid;
-use std::fs;
 
 pub use file_trait::FileManager;
 #[cfg(not(feature = "flutter"))]
@@ -98,6 +101,7 @@ pub const LOGIN_MSG_PASSWORD_EMPTY: &str = "Empty Password";
 pub const LOGIN_MSG_PASSWORD_WRONG: &str = "Wrong Password";
 pub const LOGIN_MSG_NO_PASSWORD_ACCESS: &str = "No Password Access";
 pub const LOGIN_MSG_OFFLINE: &str = "Offline";
+#[cfg(target_os = "linux")]
 pub const LOGIN_SCREEN_WAYLAND: &str = "Wayland login screen is not supported";
 #[cfg(target_os = "linux")]
 pub const SCRAP_UBUNTU_HIGHER_REQUIRED: &str = "Wayland requires Ubuntu 21.04 or higher version.";
@@ -229,6 +233,7 @@ struct Peer {
     peer_addr: SocketAddr,
     peer_public_addr: SocketAddr,
     peer_nat_type: NatType,
+    peer_lan_ipv4: Option<SocketAddr>,
     my_nat_type: i32,
     id_pk: Vec<u8>,
     listening_time_used: u64,
@@ -236,7 +241,7 @@ struct Peer {
 
 impl Peer {
     fn from_peer_id(peer_id: &str) -> ResultType<Self> {
-        let local_addr = turn_client::get_local_ip()?;
+        let local_addr = socket_client::get_lan_ipv4()?;
         let id_pk = Vec::new();
         let mut peer_addr = Config::get_any_listen_addr(true);
         let peer_public_addr = peer_addr;
@@ -263,6 +268,7 @@ impl Peer {
             my_nat_type: NatType::UNKNOWN_NAT as i32,
             id_pk,
             listening_time_used: 0,
+            peer_lan_ipv4: None,
         })
     }
 
@@ -462,6 +468,7 @@ impl Client {
         let mut peer_addr = Config::get_any_listen_addr(true);
         let mut peer_public_addr = peer_addr;
         let mut peer_nat_type = NatType::UNKNOWN_NAT;
+        let mut peer_lan_ipv4 = None;
         let my_nat_type = crate::get_nat_type(100).await;
         for i in 1..=3 {
             log::info!("#{} punch attempt with {}, id: {}", i, my_addr, peer);
@@ -482,6 +489,7 @@ impl Client {
                                 id_pk = raw_pk;
                                 peer_addr = listening.addr;
                                 peer_public_addr = listening.public_addr;
+                                peer_lan_ipv4 = listening.lan_ipv4;
                                 peer_nat_type =
                                     NatType::from_i32(listening.nat_type).unwrap_or(peer_nat_type);
                                 break;
@@ -521,6 +529,7 @@ impl Client {
                 my_nat_type,
                 id_pk,
                 listening_time_used: time_used,
+                peer_lan_ipv4,
             },
             sender,
         ))
@@ -560,8 +569,13 @@ impl Client {
 
     async fn connect_directly(peer_id: &str, peer: &Peer) -> ResultType<FramedStream> {
         let connect_timeout = peer.connect_timeout(peer_id).await;
+        let peer_addr = match peer.peer_lan_ipv4 {
+            Some(v) => v,
+            None => peer.peer_addr,
+        };
+
         log::info!("start connecting peer directly: {}", peer.local_addr);
-        match socket_client::connect_tcp(peer.peer_addr, connect_timeout).await {
+        match socket_client::connect_tcp(peer_addr, connect_timeout).await {
             Ok(conn) => {
                 log::info!("connect successfully to {} directly!", peer.local_addr);
                 Ok(conn)
@@ -571,12 +585,12 @@ impl Client {
                     "First attempt to connect to {} directly failed with timeout {}: {}",
                     peer.local_addr,
                     connect_timeout,
-					err
+                    err
                 );
 
                 let any_addr = Config::get_any_listen_addr(true);
                 log::info!("start connecting peer directly: {}", any_addr);
-                match socket_client::connect_tcp(peer.peer_addr, connect_timeout).await {
+                match socket_client::connect_tcp(peer_addr, connect_timeout).await {
                     Ok(stream) => {
                         log::info!("connect successfully to {} directly!", any_addr);
                         Ok(stream)
@@ -585,7 +599,7 @@ impl Client {
                         log::warn!(
                             "Second attempt to connect to {} directly failed with timeout {}: {}",
                             any_addr,
-							connect_timeout,
+                            connect_timeout,
                             err
                         );
                         Err(err)
@@ -1097,6 +1111,8 @@ pub struct LoginConfigHandler {
     pub received: bool,
     switch_uuid: Option<String>,
     pub save_ab_password_to_recent: bool, // true: connected with ab password
+    pub other_server: Option<(String, String, String)>,
+    pub custom_fps: Arc<Mutex<Option<usize>>>,
 }
 
 impl Deref for LoginConfigHandler {
@@ -1132,6 +1148,44 @@ impl LoginConfigHandler {
         force_relay: bool,
         tokenex: String,
     ) {
+/*
+        let mut id = id;
+        if id.contains("@") {
+            let mut v = id.split("@");
+            let raw_id: &str = v.next().unwrap_or_default();
+            let mut server_key = v.next().unwrap_or_default().split('?');
+            let server = server_key.next().unwrap_or_default();
+            let args = server_key.next().unwrap_or_default();
+            let key = if server == PUBLIC_SERVER {
+                PUBLIC_RS_PUB_KEY
+            } else {
+                let mut args_map: HashMap<&str, &str> = HashMap::new();
+                for arg in args.split('&') {
+                    if let Some(kv) = arg.find('=') {
+                        let k = &arg[0..kv];
+                        let v = &arg[kv + 1..];
+                        args_map.insert(k, v);
+                    }
+                }
+                let key = args_map.remove("key").unwrap_or_default();
+                key
+            };
+
+            // here we can check <id>/r@server
+            let real_id = crate::ui_interface::handle_relay_id(raw_id).to_string();
+            if real_id != raw_id {
+                force_relay = true;
+            }
+            self.other_server = Some((real_id.clone(), server.to_owned(), key.to_owned()));
+            id = format!("{real_id}@{server}");
+        } else {
+            let real_id = crate::ui_interface::handle_relay_id(&id);
+            if real_id != id {
+                force_relay = true;
+                id = real_id.to_owned();
+            }
+        }
+*/        
         self.id = id;
         self.conn_type = conn_type;
         self.tokenex = tokenex;
@@ -1436,16 +1490,26 @@ impl LoginConfigHandler {
             msg.image_quality = q.into();
             n += 1;
         } else if q == "custom" {
-            let config = PeerConfig::load(&self.id);
+            let config = self.load_config();
+            let allow_more = true;
             let quality = if config.custom_image_quality.is_empty() {
                 50
             } else {
-                config.custom_image_quality[0]
+                let mut quality = config.custom_image_quality[0];
+                if !allow_more && quality > 100 {
+                    quality = 50;
+                }
+                quality
             };
             msg.custom_image_quality = quality << 8;
             #[cfg(feature = "flutter")]
             if let Some(custom_fps) = self.options.get("custom-fps") {
-                msg.custom_fps = custom_fps.parse().unwrap_or(30);
+                let mut custom_fps = custom_fps.parse().unwrap_or(30);
+                if !allow_more && custom_fps > 30 {
+                    custom_fps = 30;
+                }
+                msg.custom_fps = custom_fps;
+                *self.custom_fps.lock().unwrap() = Some(custom_fps as _);
             }
             n += 1;
         }
@@ -1631,7 +1695,7 @@ impl LoginConfigHandler {
     /// # Arguments
     ///
     /// * `fps` - The given fps.
-    pub fn set_custom_fps(&mut self, fps: i32) -> Message {
+    pub fn set_custom_fps(&mut self, fps: i32, save_config: bool) -> Message {
         let mut misc = Misc::new();
         misc.set_option(OptionMessage {
             custom_fps: fps,
@@ -1639,11 +1703,14 @@ impl LoginConfigHandler {
         });
         let mut msg_out = Message::new();
         msg_out.set_misc(misc);
-        let mut config = self.load_config();
-        config
-            .options
-            .insert("custom-fps".to_owned(), fps.to_string());
-        self.save_config(config);
+        if save_config {
+            let mut config = self.load_config();
+            config
+                .options
+                .insert("custom-fps".to_owned(), fps.to_string());
+            self.save_config(config);
+        }
+        *self.custom_fps.lock().unwrap() = Some(fps as _);
         msg_out
     }
 
@@ -1761,14 +1828,14 @@ impl LoginConfigHandler {
             }
         }
         if config.keyboard_mode.is_empty() {
-            if is_keyboard_mode_supported(&KeyboardMode::Map, get_version_number(&pi.version)) {
+            if is_keyboard_mode_supported(&KeyboardMode::Map, get_version_number(&pi.version), &pi.platform) {
                 config.keyboard_mode = KeyboardMode::Map.to_string();
             } else {
                 config.keyboard_mode = KeyboardMode::Legacy.to_string();
             }
         } else {
             let keyboard_modes =
-                crate::get_supported_keyboard_modes(get_version_number(&pi.version));
+                crate::get_supported_keyboard_modes(get_version_number(&pi.version), &pi.platform);
             let current_mode = &KeyboardMode::from_str(&config.keyboard_mode).unwrap_or_default();
             if !keyboard_modes.contains(current_mode) {
                 config.keyboard_mode = KeyboardMode::Legacy.to_string();
@@ -1815,15 +1882,16 @@ impl LoginConfigHandler {
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if fs::metadata(Config::path("LastToken.toml")).is_ok() {
-			tokenex = std::fs::read_to_string(Config::path("LastToken.toml")).unwrap_or_else(|err| {
-                log::error!(
-                    "Error reading file: {:?}({})",
-                    Config::path("LastToken.toml").to_str(),
-                    err
-                );
-                String::new()
-            });
-		}
+            tokenex =
+                std::fs::read_to_string(Config::path("LastToken.toml")).unwrap_or_else(|err| {
+                    log::error!(
+                        "Error reading file: {:?}({})",
+                        Config::path("LastToken.toml").to_str(),
+                        err
+                    );
+                    String::new()
+                });
+        }
 
         #[cfg(any(target_os = "android", target_os = "ios"))]
         let tokenex = "".to_string();
@@ -1940,7 +2008,6 @@ where
     F: 'static + FnMut(usize, &mut scrap::ImageRgb) + Send,
     T: InvokeUiSession,
 {
-
     let (video_sender, video_receiver) = mpsc::channel::<MediaData>();
     let video_queue_map: Arc<RwLock<HashMap<usize, ArrayQueue<VideoFrame>>>> = Default::default();
     let video_queue_map_cloned = video_queue_map.clone();

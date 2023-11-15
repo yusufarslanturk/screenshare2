@@ -1,9 +1,10 @@
-use crate::input::{MOUSE_BUTTON_LEFT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP, MOUSE_TYPE_WHEEL};
+use crate::{
+    common::{get_supported_keyboard_modes, is_keyboard_mode_supported},
+    input::{MOUSE_BUTTON_LEFT, MOUSE_TYPE_DOWN, MOUSE_TYPE_UP, MOUSE_TYPE_WHEEL},
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use rdev::{Event, EventType::*, KeyCode};
-//#[cfg(not(any(target_os = "android", target_os = "ios")))]
-//use std::{collections::HashMap, sync::atomic::AtomicBool};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -35,8 +36,8 @@ use hbb_common::{
 use crate::client::io_loop::Remote;
 use crate::client::{
     check_if_retry, handle_hash, handle_login_error, handle_login_from_ui, handle_test_delay,
-    input_os_password, load_config, send_mouse, send_pointer_device_event,
-    start_video_audio_threads, FileManager, Key, LoginConfigHandler, QualityStatus, KEY_MAP,
+    input_os_password, load_config, send_mouse, send_pointer_device_event, start_video_audio_threads, 
+    FileManager, Key, LoginConfigHandler, QualityStatus, KEY_MAP,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::common::GrabState;
@@ -91,6 +92,7 @@ pub struct ConnectionRoundState {
     round: u32,
     state: ConnectionState,
 }
+
 impl ConnectionRoundState {
     pub fn new_round(&mut self) -> u32 {
         self.round += 1;
@@ -217,18 +219,36 @@ impl<T: InvokeUiSession> Session<T> {
         self.lc.read().unwrap().version.clone()
     }
     
+    pub fn fallback_keyboard_mode(&self) -> String { 
+        let peer_version = self.get_peer_version();
+        let platform = self.peer_platform();
+
+        let supported_modes = get_supported_keyboard_modes(peer_version, &platform);
+        if let Some(mode) = supported_modes.first() {
+            return mode.to_string();
+        } else {
+            if self.get_peer_version() >= get_version_number("1.2.0") {
+                return KeyboardMode::Map.to_string();
+            } else {
+                return KeyboardMode::Legacy.to_string();
+            }
+        }
+    }
+    
     pub fn get_keyboard_mode(&self) -> String {
         let mode = self.lc.read().unwrap().keyboard_mode.clone();
-        if ["map", "translate", "legacy"].contains(&(&mode as &str)) {
-            mode
-        } else {
-            if self.get_peer_version() > hbb_common::get_version_number("1.2.0") {
-                "map"
-            } else {
-                "legacy"
+        let keyboard_mode = KeyboardMode::from_str(&mode);
+
+        let peer_version = self.get_peer_version();
+        let platform = self.peer_platform();
+
+        // Saved keyboard mode still exists in this version.
+        if let Ok(mode) = keyboard_mode {
+            if is_keyboard_mode_supported(&mode, peer_version, &platform) {
+                return mode.to_string();
             }
-            .to_string()
         }
+        self.fallback_keyboard_mode()
     }
 
     pub fn save_keyboard_mode(&self, value: String) {
@@ -240,23 +260,36 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn get_displays_as_individual_windows(&self) -> String {
-        self.lc.read().unwrap().displays_as_individual_windows.clone()
+        self.lc
+            .read()
+            .unwrap()
+            .displays_as_individual_windows
+            .clone()
     }
 
     pub fn get_use_all_my_displays_for_the_remote_session(&self) -> String {
-        self.lc.read().unwrap().use_all_my_displays_for_the_remote_session.clone()
+        self.lc
+            .read()
+            .unwrap()
+            .use_all_my_displays_for_the_remote_session
+            .clone()
     }
-
     pub fn save_reverse_mouse_wheel(&self, value: String) {
         self.lc.write().unwrap().save_reverse_mouse_wheel(value);
     }
 
     pub fn save_displays_as_individual_windows(&self, value: String) {
-        self.lc.write().unwrap().save_displays_as_individual_windows(value);
+        self.lc
+            .write()
+            .unwrap()
+            .save_displays_as_individual_windows(value);
     }
 
     pub fn save_use_all_my_displays_for_the_remote_session(&self, value: String) {
-        self.lc.write().unwrap().save_use_all_my_displays_for_the_remote_session(value);
+        self.lc
+            .write()
+            .unwrap()
+            .save_use_all_my_displays_for_the_remote_session(value);
     }
 
     pub fn save_view_style(&self, value: String) {
@@ -292,7 +325,8 @@ impl<T: InvokeUiSession> Session<T> {
 
     #[cfg(not(feature = "flutter"))]
     pub fn is_privacy_mode_supported(&self) -> bool {
-        self.lc.read().unwrap().is_privacy_mode_supported()
+                log::info!("checking privacy mode ui");
+		self.lc.read().unwrap().is_privacy_mode_supported()
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -329,7 +363,7 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn record_status(&self, status: bool) {
-        let mut misc = Misc::new();
+        let misc = Misc::new();
         //misc.set_client_record_status(status);
         let mut msg = Message::new();
         msg.set_misc(misc);
@@ -346,17 +380,21 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn save_image_quality(&self, value: String) {
-        let msg = self.lc.write().unwrap().save_image_quality(value);
+        let msg = self.lc.write().unwrap().save_image_quality(value.clone());
         if let Some(msg) = msg {
+            self.send(Data::Message(msg));
+        }
+        if value != "custom" {
+            // non custom quality use 30 fps
+            let msg = self.lc.write().unwrap().set_custom_fps(30, false);
             self.send(Data::Message(msg));
         }
     }
 
     pub fn set_custom_fps(&self, custom_fps: i32) {
-        let msg = self.lc.write().unwrap().set_custom_fps(custom_fps);
+        let msg = self.lc.write().unwrap().set_custom_fps(custom_fps, true);
         self.send(Data::Message(msg));
     }
-
 
     pub fn get_remember(&self) -> bool {
         self.lc.read().unwrap().remember
@@ -935,15 +973,31 @@ impl<T: InvokeUiSession> Session<T> {
 
     pub fn reconnect(&self) {
 		self.send(Data::Close);
+        // 1. If current session is connecting, do not reconnect.
+        // 2. If the connection is established, send `Data::Close`.
+        // 3. If the connection is disconnected, do nothing.
+        let mut connection_round_state_lock = self.connection_round_state.lock().unwrap();
+        if self.thread.lock().unwrap().is_some() {
+            match connection_round_state_lock.state {
+                ConnectionState::Connecting => return,
+                ConnectionState::Connected => self.send(Data::Close),
+                ConnectionState::Disconnected => {}
+            }
+        }
+        let round = connection_round_state_lock.new_round();
+        drop(connection_round_state_lock);
+        
         let cloned = self.clone();
         // override only if true
         //if true == force_relay {
         //    cloned.lc.write().unwrap().force_relay = true;
         //}
         let mut lock = self.thread.lock().unwrap();
-        lock.take().map(|t| t.join());
+        // No need to join the previous thread, because it will exit automatically.
+        // And the previous thread will not change important states.
+        //lock.take().map(|t| t.join());
         *lock = Some(std::thread::spawn(move || {
-            io_loop(cloned);
+            io_loop(cloned, round);
         }));
     }
 
@@ -1166,6 +1220,7 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn switch_display(&self, display: &SwitchDisplay);
     fn set_peer_info(&self, peer_info: &PeerInfo); // flutter
     fn set_displays(&self, displays: &Vec<DisplayInfo>);
+    fn set_platform_additions(&self, data: &str);
     fn on_connected(&self, conn_type: ConnType);
     fn update_privacy_mode(&self);
     fn set_permission(&self, name: &str, value: bool);
@@ -1398,9 +1453,15 @@ impl<T: InvokeUiSession> Session<T> {
 }
 
 #[tokio::main(flavor = "current_thread")]
-pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>) {
+pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
     // It is ok to call this function multiple times.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            feature = "unix-file-copy-paste"
+        )
+    ))]
     if !handler.is_file_transfer() && !handler.is_port_forward() {
         clipboard::ContextSend::enable(true);
     }
@@ -1521,7 +1582,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>) {
         frame_count_map,
         decode_fps_map,
     );
-    remote.io_loop(&key, &token).await;
+    remote.io_loop(&key, &token, round).await;
     remote.sync_jobs_status_to_local().await;
 }
 

@@ -1,11 +1,8 @@
 use futures::SinkExt;
 use hbb_common::{
-    bail,
-    lazy_static,
-    log,
+    bail, lazy_static, log, socket_client,
     tcp::FramedStream,
     tokio::{self, net::TcpStream, sync::mpsc, time::timeout},
-    //tokio_util::compat::Compat,
     ResultType,
 };
 use std::sync::Mutex;
@@ -190,7 +187,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
         if let Some((cached_local_ip, public_ip, cached_at)) = *cached {
             //  Time since cached is in 10 minutes.
             if cached_at.elapsed() < Duration::from_secs(600) {
-                let local_ip = get_local_ip().ok()?;
+                let local_ip = socket_client::get_lan_ipv4().ok()?;
                 // The network environment shouldn't be changed,
                 // as the local ip haven't changed.
                 if cached_local_ip == local_ip {
@@ -231,7 +228,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
     for _ in 0..len {
         if let Some(addr) = rx.recv().await {
             if addr.is_some() {
-                if let Ok(local_ip) = get_local_ip() {
+                if let Ok(local_ip) = socket_client::get_lan_ipv4() {
                     let mut cached = PUBLIC_IP.lock().unwrap();
                     *cached = Some((local_ip, addr.unwrap(), Instant::now()));
                 }
@@ -240,15 +237,6 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
         }
     }
     return None;
-}
-
-// Create an udp socket and get the local ip address.
-pub fn get_local_ip() -> ResultType<IpAddr> {
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("1.1.1.1:53")?;
-    let addr = socket.local_addr()?;
-    log::info!("Got local addr {:?}", addr.ip());
-    Ok(addr.ip())
 }
 
 pub struct TurnClient {

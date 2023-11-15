@@ -1,3 +1,4 @@
+
 use super::{CursorData, ResultType};
 //use crate::common::PORTABLE_APPNAME_RUNTIME_ENV_KEY;
 use crate::{
@@ -852,18 +853,16 @@ fn get_default_install_path() -> String {
 pub fn check_update_broker_process() -> ResultType<()> {
     let process_exe = privacy_win_mag::INJECTED_PROCESS_EXE;
     let origin_process_exe = privacy_win_mag::ORIGIN_PROCESS_EXE;
-
     let exe_file = std::env::current_exe()?;
     if exe_file.parent().is_none() {
         bail!("Cannot get parent of current exe file");
     }
 	#[cfg(not(feature = "standalone"))]
 	let cur_dir = exe_file.parent().unwrap();
-    
+
 	#[cfg(feature = "standalone")]
 	let cur_dir = std::env::temp_dir();
 	let cur_exe = cur_dir.join(process_exe);
-
 	#[cfg(feature = "standalone")]
 	{
 		let tmp_path = std::env::temp_dir().to_string_lossy().to_string();
@@ -907,7 +906,6 @@ pub fn check_update_broker_process() -> ResultType<()> {
         cur_exe = cur_exe.to_string_lossy(),
     );
     run_cmds(cmds, false, "update_broker")?;
-
     Ok(())
 }
 
@@ -925,35 +923,6 @@ fn get_install_info_with_subkey(subkey: String) -> (String, String, String, Stri
     let dll = format!("{}\\sciter.dll", path);
     (subkey, path, start_menu, exe, dll)
 }
-
-/* // update_me has bad compatibility, so disable it.
-pub fn update_me() -> ResultType<()> {
-    let (_, path, _, exe) = get_install_info();
-    let src_exe = std::env::current_exe()?.to_str().unwrap_or("").to_owned();
-    let cmds = format!(
-        "
-        chcp 65001
-        sc stop {app_name}
-        taskkill /F /IM {broker_exe}
-        taskkill /F /IM {app_name}.exe /FI \"PID ne {cur_pid}\"
-        {copy_exe}
-        sc start {app_name}
-        {lic}
-    ",
-        copy_exe = copy_exe_cmd(&src_exe, &exe, &path),
-        broker_exe = WIN_MAG_INJECTED_PROCESS_EXE,
-        app_name = crate::get_app_name(),
-        lic = register_licence(),
-        cur_pid = get_current_pid(),
-    );
-    run_cmds(cmds, false, "update")?;
-    run_after_run_cmds(false);
-    std::process::Command::new(&exe)
-        .args(&["--remove", &src_exe])
-        .spawn()?;
-    Ok(())
-}
-*/
 
 fn get_after_install(exe: &str) -> String {
 	let app_name = crate::get_app_name();
@@ -1025,7 +994,6 @@ oLink.Save
         ",
             tmp_path = tmp_path,
             app_name = crate::get_app_name(),
-            //exe = exe,
         ),
         "vbs",
         "mk_shortcut",
@@ -1397,7 +1365,6 @@ fn get_license_from_exe_name() -> ResultType<License> {
     // if defined portable appname entry, replace original executable name with it.
     if let Ok(portable_exe) = std::env::var(PORTABLE_APPNAME_RUNTIME_ENV_KEY) {
         exe = portable_exe;
-        log::debug!("update portable executable name to {}", exe);
     }
     get_license_from_string(&exe)
 }
@@ -1406,48 +1373,6 @@ fn get_license_from_exe_name() -> ResultType<License> {
 pub fn is_win_server() -> bool {
     unsafe { is_windows_server() > 0 }
 }
-
-/*
-pub fn get_license() -> Option<License> {
-    let mut lic: License = Default::default();
-    if let Ok(tmp) = get_license_from_exe_name() {
-        lic = tmp;
-    } else {
-        lic.key = get_reg("Key");
-        lic.host = get_reg("Host");
-        lic.api = get_reg("Api");
-    }
-    if lic.key.is_empty() || lic.host.is_empty() {
-        return None;
-    }
-    Some(lic)
-}
-
-pub fn bootstrap() {
-    if let Some(lic) = get_license() {
-        *config::PROD_RENDEZVOUS_SERVER.write().unwrap() = lic.host.clone();
-    }
-}
-
-fn register_licence() -> String {
-    let (subkey, _, _, _, _) = get_install_info();
-    if let Ok(lic) = get_license_from_exe_name() {
-        format!(
-            "
-        reg add {subkey} /f /v Key /t REG_SZ /d \"{key}\"
-        reg add {subkey} /f /v Host /t REG_SZ /d \"{host}\"
-        reg add {subkey} /f /v Api /t REG_SZ /d \"{api}\"
-    ",
-            key = &lic.key,
-            host = &lic.host,
-            api = &lic.api,
-        )
-    } else {
-        "".to_owned()
-    }
-}
-*/
-
 
 pub fn is_rdp_service_open() -> bool {
     unsafe { has_rdp_service() == TRUE }
@@ -2439,6 +2364,24 @@ pub fn alloc_console() {
         alloc_console_and_redirect();
     }
 }
+
+/*
+fn get_license() -> Option<License> {
+    let mut lic: License = Default::default();
+    if let Ok(tmp) = get_license_from_exe_name() {
+        lic = tmp;
+    } else {
+        // for back compatibility from migrating from <= 1.2.1 to 1.2.2
+        lic.key = get_reg("Key");
+        lic.host = get_reg("Host");
+        lic.api = get_reg("Api");
+    }
+    if lic.key.is_empty() || lic.host.is_empty() {
+        return None;
+    }
+    Some(lic)
+}
+*/
 
 fn get_sid_of_user(username: &str) -> ResultType<String> {
     let mut output = Command::new("wmic")

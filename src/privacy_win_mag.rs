@@ -69,16 +69,27 @@ struct WindowHandlers {
 
 impl Drop for WindowHandlers {
     fn drop(&mut self) {
+        self.reset();
+    }
+}
+
+impl WindowHandlers {
+    fn reset(&mut self) {
         unsafe {
+            if self.hprocess != 0 {
+                //let _res = TerminateProcess(self.hprocess as _, 0);
+                CloseHandle(self.hprocess as _);
+            }
+            self.hprocess = 0;
             if self.hthread != 0 {
                 CloseHandle(self.hthread as _);
             }
             self.hthread = 0;
-            if self.hprocess != 0 {
-                CloseHandle(self.hprocess as _);
-            }
-            self.hprocess = 0;
         }
+    }
+
+    fn is_default(&self) -> bool {
+        self.hthread == 0 && self.hprocess == 0
     }
 }
 
@@ -108,7 +119,7 @@ pub fn turn_on_privacy(conn_id: i32) -> ResultType<bool> {
         );
     }
 
-    if !*DLL_FOUND.lock().unwrap() {
+    if WND_HANDLERS.lock().unwrap().is_default() {
         log::info!("turn_on_privacy, dll not found when started, try start");
         start()?;
         std::thread::sleep(std::time::Duration::from_millis(1_000));
@@ -184,7 +195,7 @@ pub fn start() -> ResultType<()> {
         );
     }
 
-    *DLL_FOUND.lock().unwrap() = true;
+    //*DLL_FOUND.lock().unwrap() = true;
 
     let hwnd = wait_find_privacy_hwnd(1_000)?;
     if !hwnd.is_null() {
@@ -287,7 +298,7 @@ pub fn start() -> ResultType<()> {
 
 #[inline]
 pub fn stop() {
-    //WND_HANDLERS.lock().unwrap().reset();
+    WND_HANDLERS.lock().unwrap().reset();
 }
 
 unsafe fn inject_dll<'a>(hproc: HANDLE, hthread: HANDLE, dll_file: &'a str) -> ResultType<()> {

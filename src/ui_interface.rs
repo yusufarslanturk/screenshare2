@@ -2,6 +2,7 @@
 use hbb_common::password_security;
 use hbb_common::{
     allow_err,
+    bytes::Bytes,
     config::{self, Config, LocalConfig, PeerConfig},
     directories_next, log, tokio,
 };
@@ -126,10 +127,11 @@ pub fn show_run_without_install() -> bool {
     false
 }
 
-/*#[inline]
+/*
+#[inline]
 pub fn get_license() -> String {
     #[cfg(windows)]
-    if let Some(lic) = crate::platform::windows::get_license() {
+    if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         #[cfg(feature = "flutter")]
         return format!("Key: {}\nHost: {}\nApi: {}", lic.key, lic.host, lic.api);
         // default license format is html formed (sciter)
@@ -140,7 +142,8 @@ pub fn get_license() -> String {
         );
     }
     Default::default()
-}*/
+}
+*/
 
 #[inline]
 pub fn get_option<T: AsRef<str>>(key: T) -> String {
@@ -955,7 +958,7 @@ fn check_connect_status(reconnect: bool) -> mpsc::UnboundedSender<ipc::Data> {
 /*
 #[cfg(feature = "flutter")]
 pub fn account_auth(op: String, id: String, uuid: String, remember_me: bool) {
-    account::OidcSession::account_auth(op, id, uuid, remember_me);
+    account::OidcSession::account_auth(get_api_server(), op, id, uuid, remember_me);
 }
 
 #[cfg(feature = "flutter")]
@@ -1242,33 +1245,33 @@ async fn check_id(
                 crate::common::get_next_nonkeyexchange_msg(&mut socket, None).await
             {
                 match msg_in.union {
-                        Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
-                            match rpr.result.enum_value_or_default() {
-                                register_pk_response::Result::OK => {
-                                    ok = true;
-                                }
-                                register_pk_response::Result::ID_EXISTS => {
-                                    return "Not available";
-                                }
-                                register_pk_response::Result::TOO_FREQUENT => {
-                                    return "Too frequent";
-                                }
-                                register_pk_response::Result::NOT_SUPPORT => {
-                                    return "server_not_support";
-                                }
-                                register_pk_response::Result::SERVER_ERROR => {
-                                    return "Server error";
-                                }
-                                register_pk_response::Result::INVALID_ID_FORMAT => {
-                                    return INVALID_FORMAT;
-                                }
-                                _ => {}
+                    Some(rendezvous_message::Union::RegisterPkResponse(rpr)) => {
+                        match rpr.result.enum_value() {
+                            Ok(register_pk_response::Result::OK) => {
+                                ok = true;
                             }
+                            Ok(register_pk_response::Result::ID_EXISTS) => {
+                                return "Not available";
+                            }
+                            Ok(register_pk_response::Result::TOO_FREQUENT) => {
+                                return "Too frequent";
+                            }
+                            Ok(register_pk_response::Result::NOT_SUPPORT) => {
+                                return "server_not_support";
+                            }
+                            Ok(register_pk_response::Result::SERVER_ERROR) => {
+                                return "Server error";
+                            }
+                            Ok(register_pk_response::Result::INVALID_ID_FORMAT) => {
+                                return INVALID_FORMAT;
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
+        }
         if !ok {
             return UNKNOWN_ERROR;
         }

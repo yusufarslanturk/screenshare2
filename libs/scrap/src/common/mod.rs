@@ -97,8 +97,6 @@ pub fn would_block_if_equal(old: &mut Vec<u8>, b: &[u8]) -> std::io::Result<()> 
 //hophere
 //#[cfg(not(target_os = "ios"))]
 pub trait TraitCapturer {
-    fn set_use_yuv(&mut self, use_yuv: bool);
-
     // We doesn't support
     #[cfg(not(any(target_os = "ios")))]
     fn frame<'a>(&'a mut self, timeout: std::time::Duration) -> std::io::Result<Frame<'a>>;
@@ -109,6 +107,36 @@ pub trait TraitCapturer {
     fn set_gdi(&mut self) -> bool;
 }
 
+
+pub trait TraitFrame {
+    fn data(&self) -> &[u8];
+
+    fn width(&self) -> usize;
+
+    fn height(&self) -> usize;
+
+    fn stride(&self) -> Vec<usize>;
+
+    fn pixfmt(&self) -> Pixfmt;
+}
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Pixfmt {
+    BGRA,
+    RGBA,
+    I420,
+    NV12,
+    I444,
+}
+
+#[derive(Debug, Clone)]
+pub struct EncodeYuvFormat {
+    pub pixfmt: Pixfmt,
+    pub w: usize,
+    pub h: usize,
+    pub stride: Vec<usize>,
+    pub u: usize,
+    pub v: usize,
+}
 #[cfg(x11)]
 #[inline]
 pub fn is_x11() -> bool {
