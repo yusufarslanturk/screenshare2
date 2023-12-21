@@ -11,6 +11,7 @@ mod el;
 mod en;
 mod eo;
 mod es;
+mod et;
 mod fa;
 mod fr;
 mod hu;
@@ -21,6 +22,7 @@ mod ko;
 mod kz;
 mod lt;
 mod lv;
+mod nb;
 mod nl;
 mod pl;
 mod ptbr;
@@ -54,10 +56,12 @@ lazy_static::lazy_static! {
             ("cs", "Čeština"),
             ("hu", "Magyar"),
             ("da", "Dansk"),
+            ("nb", "Norsk bokmål"),            
             ("sv", "Svenska"),
             ("pl", "Polski"),
             ("lt", "Lietuvių"),
     		("lv", "Latviešu"),            
+    		("et", "Eesti keel"),    		
             ("sr", "Srpski"),
             ("sq", "Shqip"),
             ("sk", "Slovenčina"),
@@ -114,8 +118,10 @@ pub fn translate_locale(name: String, locale: &str) -> String {
         "it" => it::T.deref(),
         "zh-tw" => tw::T.deref(),
         "de" => de::T.deref(),
+        "nb" => nb::T.deref(),
         "nl" => nl::T.deref(),
         "es" => es::T.deref(),
+        "et" => et::T.deref(),
         "hu" => hu::T.deref(),
         "ru" => ru::T.deref(),
         "eo" => eo::T.deref(),

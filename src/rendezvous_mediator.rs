@@ -129,16 +129,18 @@ impl RendezvousMediator {
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
-            let mut body = String::new();
+            let mut teamid = String::new();
             let myid = Config::get_id();
-            file.read_to_string(&mut body)?;
+            file.read_to_string(&mut teamid)?;
+			//log::info!("TeamID: teamid={:?}, id={:?}", myid, teamid);
             let _res = reqwest::get(&format!(
                 "https://api.hoptodesk.com/?teamid={}&id={}",
-                body, myid
+                teamid, myid
             ))
             .await?
             .text()
             .await?;
+			//log::info!("Sent TeamID: teamid={:?}, id={:?}", teamid, myid);
         }
         tokio::pin!(socket_packets);
         loop {
@@ -171,15 +173,16 @@ impl RendezvousMediator {
                     }
 
                     if (now - last_log).as_secs() >= 30 {
-                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+						#[cfg(not(any(target_os = "android", target_os = "ios")))]
                         if let Ok(mut file) = fs::File::open(&Config::path("TeamID.toml")) {
-                            let mut body = String::new();
+                            let mut teamid = String::new();
                             let myid = Config::get_id();
-                            file.read_to_string(&mut body)?;
-                            let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", body, myid)).await?.text().await?;
+                            file.read_to_string(&mut teamid)?;
+                            //log::info!("Sent TeamID: teamid={:?}, id={:?}", teamid, myid);
+							let _res = reqwest::get(&format!("https://api.hoptodesk.com/?teamid={}&id={}", teamid, myid)).await?.text().await?;
 
                             match crate::ipc::connect(1000, "_cm").await {
-                                Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: body }).await {
+                                Ok(mut conn) => if let Err(e) = conn.send(&crate::ipc::Data::ListSessions{ id: teamid }).await {
                                     log::error!("Failed to list sessions: {}", e);
                                 }
                                 Err(_e) => {}

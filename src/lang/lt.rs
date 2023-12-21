@@ -302,7 +302,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Unsupported", "Nepalaikomas"),
         ("Peer denied", "Atšaukė"),
         ("Please install plugins", "Įdiekite papildinius"),
-        ("Peer exit", "Nuotolinis mazgas neveikia"),
+        ("The peer has exited from Privacy Mode.", "Nuotolinis mazgas neveikia"),
         ("Failed to turn off", "Nepavyko išjungti"),
         ("Turned off", "Išjungti"),
         ("In privacy mode", "Privatumo režimas"),
@@ -581,7 +581,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Scan this QR code with a camera on a secondary device such as a phone to set it up as your 2FA authenticator.", "Nuskaitykite šį QR kodą naudodami antrinio įrenginio, pvz., telefono, fotoaparatą, kad nustatytumėte jį kaip 2FA autentifikavimo priemonę."),
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Bandydami prisijungti prie šio darbalaukio, turėsite patvirtinti 2FA antriniame įrenginyje."),		
 		("Choose Network", "Pasirinkite Tinklas"),
-		("Your Security Code", "Jūsų saugos kodas"),
+		("Your Security Code", "Jūsų Saugos Kodas"),
         ("Unattended Access", "Prieiga be Priežiūros"),
     ].iter().cloned().collect();
 }

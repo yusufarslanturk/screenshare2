@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub fn start_tray() {
-    //use hbb_common::{allow_err, log};
     allow_err!(make_tray());
 }
 
@@ -143,7 +142,9 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
                     *control_flow = ControlFlow::Exit;
                     return;
                 }
-                crate::platform::uninstall_service(false);
+                if !crate::platform::uninstall_service(false) {
+                    *control_flow = ControlFlow::Exit;
+                }
             } else if event.id == open_i.id() {
 				open_func();
             } else if event.id == stopserv_i.id() {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
@@ -43,10 +44,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableDirectIPAccess = false;
   var _enableRecordSession = false;
   var _autoRecordIncomingSession = false;
+  var _allowAutoDisconnect = false;
   var _localIP = "";
   var _directAccessPort = "";
   var _fingerprint = "";
   var _buildDate = "";
+  var _autoDisconnectTimeout = "";
 
   @override
   void initState() {
@@ -149,6 +152,20 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         _buildDate = buildDate;
       }
 
+      final allowAutoDisconnect = option2bool('allow-auto-disconnect',
+          await bind.mainGetOption(key: 'allow-auto-disconnect'));
+      if (allowAutoDisconnect != _allowAutoDisconnect) {
+        update = true;
+        _allowAutoDisconnect = allowAutoDisconnect;
+      }
+
+      final autoDisconnectTimeout =
+          await bind.mainGetOption(key: 'auto-disconnect-timeout');
+      if (autoDisconnectTimeout != _autoDisconnectTimeout) {
+        update = true;
+        _autoDisconnectTimeout = autoDisconnectTimeout;
+      }
+      
       if (update) {
         setState(() {});
       }
@@ -303,6 +320,48 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           _enableDirectIPAccess = !_enableDirectIPAccess;
           String value = bool2option('direct-server', _enableDirectIPAccess);
           await bind.mainSetOption(key: 'direct-server', value: value);
+          setState(() {});
+        },
+      ),
+      SettingsTile.switchTile(
+        title: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(translate("auto_disconnect_option_tip")),
+                    Offstage(
+                        offstage: !_allowAutoDisconnect,
+                        child: Text(
+                          '${_autoDisconnectTimeout.isEmpty ? '10' : _autoDisconnectTimeout} min',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        )),
+                  ])),
+              Offstage(
+                  offstage: !_allowAutoDisconnect,
+                  child: IconButton(
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        Icons.edit,
+                        size: 20,
+                      ),
+                      onPressed: () async {
+                        final timeout = await changeAutoDisconnectTimeout(
+                            _autoDisconnectTimeout);
+                        setState(() {
+                          _autoDisconnectTimeout = timeout;
+                        });
+                      }))
+            ]),
+        initialValue: _allowAutoDisconnect,
+        onToggle: (_) async {
+          _allowAutoDisconnect = !_allowAutoDisconnect;
+          String value =
+              bool2option('allow-auto-disconnect', _allowAutoDisconnect);
+          await bind.mainSetOption(key: 'allow-auto-disconnect', value: value);
           setState(() {});
         },
       )
@@ -473,7 +532,14 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Text(_fingerprint),
                 ),
-                leading: Icon(Icons.fingerprint)),*/
+                leading: Icon(Icons.fingerprint)),
+            SettingsTile(
+              title: Text(translate("Privacy Statement")),
+              onPressed: (context) =>
+                  launchUrlString('https://rustdesk.com/privacy.html'),
+              leading: Icon(Icons.privacy_tip),
+            )
+*/            
           ],
         ),
       ],
@@ -489,6 +555,23 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       return false;
     }
     return true;
+  }
+
+  defaultDisplaySection() {
+    return SettingsSection(
+      title: Text(translate("Display Settings")),
+      tiles: [
+        SettingsTile(
+            title: Text(translate('Display Settings')),
+            leading: Icon(Icons.desktop_windows_outlined),
+            trailing: Icon(Icons.arrow_forward_ios),
+            onPressed: (context) {
+              Navigator.push(context, MaterialPageRoute(builder: (context) {
+                return _DisplayPage();
+              }));
+            })
+      ],
+    );
   }
 }
 
@@ -603,3 +686,182 @@ class ScanButton extends StatelessWidget {
   }
 }
 */
+
+class _DisplayPage extends StatefulWidget {
+  const _DisplayPage({super.key});
+
+  @override
+  State<_DisplayPage> createState() => __DisplayPageState();
+}
+
+class __DisplayPageState extends State<_DisplayPage> {
+  @override
+  Widget build(BuildContext context) {
+    final Map codecsJson = jsonDecode(bind.mainSupportedHwdecodings());
+    final h264 = codecsJson['h264'] ?? false;
+    final h265 = codecsJson['h265'] ?? false;
+    var codecList = [
+      _RadioEntry('Auto', 'auto'),
+      _RadioEntry('VP8', 'vp8'),
+      _RadioEntry('VP9', 'vp9'),
+      _RadioEntry('AV1', 'av1'),
+      if (h264) _RadioEntry('H264', 'h264'),
+      if (h265) _RadioEntry('H265', 'h265')
+    ];
+    RxBool showCustomImageQuality = false.obs;
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: Icon(Icons.arrow_back_ios)),
+        title: Text(translate('Display Settings')),
+        centerTitle: true,
+      ),
+      body: SettingsList(sections: [
+        SettingsSection(
+          tiles: [
+            _getPopupDialogRadioEntry(
+              title: 'Default View Style',
+              list: [
+                _RadioEntry('Scale original', kRemoteViewStyleOriginal),
+                _RadioEntry('Scale adaptive', kRemoteViewStyleAdaptive)
+              ],
+              getter: () => bind.mainGetUserDefaultOption(key: 'view_style'),
+              asyncSetter: (value) async {
+                await bind.mainSetUserDefaultOption(
+                    key: 'view_style', value: value);
+              },
+            ),
+            _getPopupDialogRadioEntry(
+              title: 'Default Image Quality',
+              list: [
+                _RadioEntry('Good image quality', kRemoteImageQualityBest),
+                _RadioEntry('Balanced', kRemoteImageQualityBalanced),
+                _RadioEntry('Optimize reaction time', kRemoteImageQualityLow),
+                _RadioEntry('Custom', kRemoteImageQualityCustom),
+              ],
+              getter: () {
+                final v = bind.mainGetUserDefaultOption(key: 'image_quality');
+                showCustomImageQuality.value = v == kRemoteImageQualityCustom;
+                return v;
+              },
+              asyncSetter: (value) async {
+                await bind.mainSetUserDefaultOption(
+                    key: 'image_quality', value: value);
+                showCustomImageQuality.value =
+                    value == kRemoteImageQualityCustom;
+              },
+              tail: customImageQualitySetting(),
+              showTail: showCustomImageQuality,
+              notCloseValue: kRemoteImageQualityCustom,
+            ),
+            _getPopupDialogRadioEntry(
+              title: 'Default Codec',
+              list: codecList,
+              getter: () =>
+                  bind.mainGetUserDefaultOption(key: 'codec-preference'),
+              asyncSetter: (value) async {
+                await bind.mainSetUserDefaultOption(
+                    key: 'codec-preference', value: value);
+              },
+            ),
+          ],
+        ),
+        SettingsSection(
+          title: Text(translate('Other Default Options')),
+          tiles: [
+            otherRow('Show remote cursor', 'show_remote_cursor'),
+            otherRow('Show quality monitor', 'show_quality_monitor'),
+            otherRow('Mute', 'disable_audio'),
+            otherRow('Disable clipboard', 'disable_clipboard'),
+            otherRow('Lock after session end', 'lock_after_session_end'),
+            otherRow('Privacy mode', 'privacy_mode'),
+            otherRow('Touch mode', 'touch-mode'),
+            otherRow('True color (4:4:4)', 'i444'),
+          ],
+        ),
+      ]),
+    );
+  }
+
+  otherRow(String label, String key) {
+    final value = bind.mainGetUserDefaultOption(key: key) == 'Y';
+    return SettingsTile.switchTile(
+      initialValue: value,
+      title: Text(translate(label)),
+      onToggle: (b) async {
+        await bind.mainSetUserDefaultOption(key: key, value: b ? 'Y' : '');
+        setState(() {});
+      },
+    );
+  }
+}
+
+class _RadioEntry {
+  final String label;
+  final String value;
+  _RadioEntry(this.label, this.value);
+}
+
+typedef _RadioEntryGetter = String Function();
+typedef _RadioEntrySetter = Future<void> Function(String);
+
+_getPopupDialogRadioEntry({
+  required String title,
+  required List<_RadioEntry> list,
+  required _RadioEntryGetter getter,
+  required _RadioEntrySetter asyncSetter,
+  Widget? tail,
+  RxBool? showTail,
+  String? notCloseValue,
+}) {
+  RxString groupValue = ''.obs;
+  RxString valueText = ''.obs;
+
+  init() {
+    groupValue.value = getter();
+    final e = list.firstWhereOrNull((e) => e.value == groupValue.value);
+    if (e != null) {
+      valueText.value = e.label;
+    }
+  }
+
+  init();
+
+  void showDialog() async {
+    gFFI.dialogManager.show((setState, close, context) {
+      onChanged(String? value) async {
+        if (value == null) return;
+        await asyncSetter(value);
+        init();
+        if (value != notCloseValue) {
+          close();
+        }
+      }
+
+      return CustomAlertDialog(
+          content: Obx(
+        () => Column(children: [
+          ...list
+              .map((e) => getRadio(Text(translate(e.label)), e.value,
+                  groupValue.value, (String? value) => onChanged(value)))
+              .toList(),
+          Offstage(
+            offstage:
+                !(tail != null && showTail != null && showTail.value == true),
+            child: tail,
+          ),
+        ]),
+      ));
+    }, backDismiss: true, clickMaskDismiss: true);
+  }
+
+  return SettingsTile(
+    title: Text(translate(title)),
+    onPressed: (context) => showDialog(),
+    value: Padding(
+      padding: EdgeInsets.symmetric(vertical: 8),
+      child: Obx(() => Text(translate(valueText.value))),
+    ),
+  );
+}

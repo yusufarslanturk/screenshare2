@@ -1,5 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::common::get_default_sound_input;
 use crate::{
     client::file_trait::FileManager,
     common::is_keyboard_mode_supported,
@@ -7,6 +5,11 @@ use crate::{
     flutter::{self, SESSIONS, session_add, session_add_existed, session_start_, sessions},
     input::*,
     ui_interface::{self, *},
+};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use crate::{
+    common::get_default_sound_input,
+    keyboard::input_source::{change_input_source, get_cur_session_input_source},
 };
 use flutter_rust_bridge::{StreamSink, SyncReturn};
 #[cfg(feature = "plugin_framework")]
@@ -40,6 +43,7 @@ lazy_static::lazy_static! {
 }
 
 fn initialize(app_dir: &str) {
+    flutter::async_tasks::start_flutter_async_runner();
     *config::APP_DIR.write().unwrap() = app_dir.to_owned();
     #[cfg(target_os = "android")]
     {
@@ -209,10 +213,11 @@ pub fn session_record_status(session_id: SessionID, status: bool) {
     }
 }
 
-pub fn session_reconnect(session_id: SessionID, force_relay: bool) {
+pub fn session_reconnect(session_id: SessionID, _force_relay: bool) {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         session.reconnect();
     }
+    session_on_waiting_for_image_dialog_show(session_id);
 }
 
 pub fn session_toggle_option(session_id: SessionID, value: String) {
@@ -223,6 +228,12 @@ pub fn session_toggle_option(session_id: SessionID, value: String) {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if sessions::get_session_by_session_id(&session_id).is_some() && value == "disable-clipboard" {
         crate::flutter::update_text_clipboard_required();
+    }
+}
+
+pub fn session_toggle_privacy_mode(session_id: SessionID, impl_key: String, on: bool) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.toggle_privacy_mode(impl_key, on);
     }
 }
 
@@ -332,12 +343,13 @@ pub fn session_set_keyboard_mode(session_id: SessionID, value: String) {
     }
 }
 
-pub fn session_get_reverse_mouse_wheel(session_id: SessionID) -> Option<String> {
-    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+pub fn session_get_reverse_mouse_wheel_sync(session_id: SessionID) -> SyncReturn<Option<String>> {
+    let res = if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         Some(session.get_reverse_mouse_wheel())
     } else {
         None
-    }
+    };
+    SyncReturn(res)
 }
 
 pub fn session_set_reverse_mouse_wheel(session_id: SessionID, value: String) {
@@ -397,6 +409,7 @@ pub fn session_is_keyboard_mode_supported(session_id: SessionID, mode: String) -
             SyncReturn(is_keyboard_mode_supported(
                 &mode,
                 session.get_peer_version(),
+                &session.peer_platform(),
             ))
         } else {
             SyncReturn(false)
@@ -430,14 +443,8 @@ pub fn session_ctrl_alt_del(session_id: SessionID) {
     }
 }
 
-pub fn session_switch_display(session_id: SessionID, value: Vec<i32>) {
-    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
-        if value.len() == 1 {
-            session.switch_display(value[0]);
-        } else {
-            session.capture_displays(vec![], vec![], value);
-        }
-    }
+pub fn session_switch_display(is_desktop: bool, session_id: SessionID, value: Vec<i32>) {
+    sessions::session_switch_display(is_desktop, session_id, value);
 }
 
 pub fn session_handle_flutter_key_event(
@@ -865,6 +872,18 @@ pub fn main_set_local_option(key: String, value: String) {
     set_local_option(key, value)
 }
 
+pub fn main_get_input_source() -> SyncReturn<String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let input_source = get_cur_session_input_source();
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let input_source = "".to_owned();
+    SyncReturn(input_source)
+}
+
+pub fn main_set_input_source(session_id: SessionID, value: String) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    change_input_source(session_id, value);
+}
 pub fn main_get_my_id() -> String {
     get_id()
 }
@@ -1103,7 +1122,7 @@ pub fn main_get_user_default_option(key: String) -> SyncReturn<String> {
 }
 
 pub fn main_handle_relay_id(id: String) -> String {
-    handle_relay_id(id)
+    handle_relay_id(&id).to_owned()
 }
 
 pub fn main_get_main_display() -> SyncReturn<String> {
@@ -1411,6 +1430,12 @@ pub fn session_on_waiting_for_image_dialog_show(session_id: SessionID) {
     super::flutter::session_on_waiting_for_image_dialog_show(session_id);
 }
 
+pub fn session_toggle_virtual_display(session_id: SessionID, index: i32, on: bool) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.toggle_virtual_display(index, on);
+    }
+}
+
 pub fn main_set_home_dir(_home: String) {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -1610,16 +1635,10 @@ pub fn main_is_installed() -> SyncReturn<bool> {
     SyncReturn(is_installed())
 }
 
-pub fn main_start_grab_keyboard() -> SyncReturn<bool> {
-    #[cfg(target_os = "linux")]
-    if !*crate::common::IS_X11 {
-        return SyncReturn(false);
-    }
-    crate::keyboard::client::start_grab_loop();
-    if !is_can_input_monitoring(false) {
-        return SyncReturn(false);
-    }
-    SyncReturn(true)
+pub fn main_init_input_source() -> SyncReturn<()> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::keyboard::input_source::init_input_source();
+    SyncReturn(())
 }
 
 pub fn main_is_installed_lower_version() -> SyncReturn<bool> {
@@ -1696,7 +1715,7 @@ pub fn install_install_path() -> SyncReturn<String> {
     SyncReturn(install_path())
 }
 
-pub fn main_account_auth(op: String, remember_me: bool) {
+pub fn main_account_auth(_op: String, _remember_me: bool) {
     // let id = get_id();
     // let uuid = get_uuid();
     // account_auth(op, id, uuid);
@@ -1747,9 +1766,15 @@ pub fn main_use_texture_render() -> SyncReturn<bool> {
     }
 }
 
-pub fn cm_start_listen_ipc_thread() {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    crate::flutter::connection_manager::start_listen_ipc_thread();
+pub fn main_has_file_clipboard() -> SyncReturn<bool> {
+    let ret = cfg!(any(
+        target_os = "windows",
+        all(
+            feature = "unix-file-copy-paste",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ));
+    SyncReturn(ret)
 }
 
 pub fn cm_init() {
@@ -1803,6 +1828,31 @@ pub fn is_selinux_enforcing() -> SyncReturn<bool> {
     #[cfg(not(target_os = "linux"))]
     {
         SyncReturn(false)
+    }
+}
+
+pub fn main_default_privacy_mode_impl() -> SyncReturn<String> {
+    SyncReturn(crate::privacy_mode::DEFAULT_PRIVACY_MODE_IMPL.to_owned())
+}
+
+pub fn main_supported_privacy_mode_impls() -> SyncReturn<String> {
+    SyncReturn(
+        serde_json::to_string(&crate::privacy_mode::get_supported_privacy_mode_impl())
+            .unwrap_or_default(),
+    )
+}
+
+pub fn main_supported_input_source() -> SyncReturn<String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        SyncReturn("".to_owned())
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        SyncReturn(
+            serde_json::to_string(&crate::keyboard::input_source::get_supported_input_source())
+                .unwrap_or_default(),
+        )
     }
 }
 

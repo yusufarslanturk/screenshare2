@@ -2,7 +2,7 @@
 use hbb_common::password_security;
 use hbb_common::{
     allow_err,
-    bytes::Bytes,
+    //bytes::Bytes,
     config::{self, Config, LocalConfig, PeerConfig},
     directories_next, log, tokio,
 };
@@ -12,6 +12,8 @@ use hbb_common::{
     tokio::{sync::mpsc, time},
 };
 use serde_derive::Serialize;
+//#[cfg(not(any(target_os = "android", target_os = "ios")))]
+//use std::process::Child;
 use std::{
     collections::HashMap,
     process::Child,
@@ -25,6 +27,7 @@ use crate::{common::SOFTWARE_UPDATE_URL};
 use crate::ipc;
 
 //type Message = RendezvousMessage;
+//#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub type Children = Arc<Mutex<(bool, HashMap<(String, String), Child>)>>;
 
 #[derive(Clone, Debug, Serialize)]
@@ -65,6 +68,7 @@ lazy_static::lazy_static! {
     static ref OPTION_SYNCED: Arc<Mutex<bool>> = Default::default();
     static ref OPTIONS : Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(Config::get_options()));
     pub static ref SENDER : Mutex<mpsc::UnboundedSender<ipc::Data>> = Mutex::new(check_connect_status(true));
+    //static ref CHILDREN : Children = Default::default();
 }
 
 const INIT_ASYNC_JOB_STATUS: &str = " ";
@@ -104,11 +108,12 @@ pub fn install_me(_options: String, _path: String, _silent: bool, _debug: bool, 
 		std::process::exit(0);
     });
 }
-
+/*
 #[inline]
 pub fn update_me(_path: String) {
     goto_install();
 }
+*/
 
 #[inline]
 pub fn run_without_install() {
@@ -613,13 +618,13 @@ pub fn get_error() -> String {
     #[cfg(target_os = "linux")]
     {
         let dtype = crate::platform::linux::get_display_server();
-        if "wayland" == dtype {
+        if crate::platform::linux::DISPLAY_SERVER_WAYLAND == dtype {
             return crate::server::wayland::common_get_error();
         }
-        if dtype != "x11" {
+        if dtype != crate::platform::linux::DISPLAY_SERVER_X11 {
             return format!(
                 "{} {}, {}",
-                crate::client::translate("Unsupported display server ".to_owned()),
+                crate::client::translate("Unsupported display server".to_owned()),
                 dtype,
                 crate::client::translate("x11 expected".to_owned()),
             );
@@ -646,7 +651,13 @@ pub fn current_is_wayland() -> bool {
 
 #[inline]
 pub fn get_new_version() -> String {
-    hbb_common::get_version_from_url(&*SOFTWARE_UPDATE_URL.lock().unwrap())
+    (*SOFTWARE_UPDATE_URL
+        .lock()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap_or(""))
+    .to_string()
 }
 
 #[inline]
@@ -732,6 +743,7 @@ pub fn get_init_async_job_status() -> String {
     INIT_ASYNC_JOB_STATUS.to_string()
 }
 
+//#[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
 pub fn reset_async_job_status() {
     *ASYNC_JOB_STATUS.lock().unwrap() = get_init_async_job_status();
@@ -769,12 +781,13 @@ pub fn get_request(url: String, header: String) {
         };
     });
 }
-
+/*
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn is_ok_change_id() -> bool {
     hbb_common::machine_uid::get().is_ok()
 }
+*/
 
 #[inline]
 pub fn get_async_job_status() -> String {
@@ -1022,7 +1035,13 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
     let mut mouse_time = 0;
     #[cfg(not(feature = "flutter"))]
     let mut id = "".to_owned();
-    #[cfg(target_os = "windows")]
+    #[cfg(any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "macos"),
+            feature = "unix-file-copy-paste"
+        )
+    ))]
     let mut enable_file_transfer = "".to_owned();
 
     loop {
@@ -1045,7 +1064,13 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                 *OPTIONS.lock().unwrap() = v;
                                 *OPTION_SYNCED.lock().unwrap() = true;
 
-                                #[cfg(target_os="windows")]
+                                #[cfg(any(
+                                        target_os = "windows",
+                                        all(
+                                            any(target_os="linux", target_os = "macos"),
+                                            feature = "unix-file-copy-paste"
+                                            )
+                                        ))]
                                 {
                                     let b = OPTIONS.lock().unwrap().get("enable-file-transfer").map(|x| x.to_string()).unwrap_or_default();
                                     if b != enable_file_transfer {
@@ -1282,9 +1307,9 @@ async fn check_id(
 }
 */
 // if it's relay id, return id processed, otherwise return original id
-pub fn handle_relay_id(id: String) -> String {
+pub fn handle_relay_id(id: &str) -> &str {
     if id.ends_with(r"\r") || id.ends_with(r"/r") {
-        id[0..id.len() - 2].to_string()
+        &id[0..id.len() - 2]
     } else {
         id
     }

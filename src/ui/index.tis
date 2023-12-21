@@ -1,8 +1,6 @@
 if (is_osx) view.windowBlurbehind = #light;
 //stdout.println("current platform:", OS);
 //stdout.println("is_xfce: ", is_xfce);
-
-
 				
 // html min-width, min-height not working on mac, below works for all
 view.windowMinSize = (scaleIt(560), scaleIt(300));
@@ -217,6 +215,7 @@ class Enhancements: Reactor.Component {
                 {has_hwcodec ? <li #enable-hwcodec><span>{svg_checkmark}</span>{translate("Hardware Codec")} (beta)</li> : ""}
                 <li #enable-abr><span>{svg_checkmark}</span>{translate("Adaptive Bitrate")} (beta)</li>
                 <li #screen-recording>{translate("Recording")}</li>
+                {support_remove_wallpaper ? <li #allow-remove-wallpaper><span>{svg_checkmark}</span>{translate("Remove wallpaper during incoming sessions")}</li> : ""}
             </menu>
         </li>;
     }
@@ -225,6 +224,9 @@ class Enhancements: Reactor.Component {
         for (var el in $$(menu#enhancements-menu>li)) {
             if (el.id && el.id.indexOf("enable-") == 0) {
                 var enabled = handler.get_option(el.id) != "N";
+                el.attributes.toggleClass("selected", enabled);
+            } else if (el.id && el.id.indexOf("allow-") == 0) {
+                var enabled = handler.get_option(el.id) == "Y";
                 el.attributes.toggleClass("selected", enabled);
             }
         }
@@ -235,6 +237,8 @@ class Enhancements: Reactor.Component {
         var v = me.id;
         if (v.indexOf("enable-") == 0) {
             handler.set_option(v, handler.get_option(v) != 'N' ? 'N' : '');
+        } else if (v.indexOf("allow-") == 0) {
+            handler.set_option(v, handler.get_option(v) == 'Y' ? '' : 'Y');
         } else if (v == 'screen-recording') {
             var dir = handler.get_option("video-save-directory");
             if (!dir) dir = handler.default_video_save_directory();
@@ -518,33 +522,6 @@ class MyIdMenu: Reactor.Component {
         } else if (me.id == "show-settings-button") {
             handler.set_config_option("show-settings-button", (show_settings_button = !show_settings_button) ? "Y" : "");
             app.update(true);
-/*
-        } else if (me.id == "custom-server") {
-            var configOptions = handler.get_options();
-            var old_relay = configOptions["relay-server"] || "";
-            var old_id = configOptions["custom-rendezvous-server"] || "";
-            msgbox("custom-server", "ID/Relay Server", "<div .form .set-password> \
-            <div><span>" + translate("ID Server") + ": </span><input|text .outline-focus name='id' value='" + old_id + "' /></div> \
-            <div><span>" + translate("Relay Server") + ": </span><input|text name='relay' value='" + old_relay + "' /></div> \
-            </div> \
-            ", "", function(res=null) {
-                if (!res) return;
-                var id = (res.id || "").trim();
-                var relay = (res.relay || "").trim();
-                if (id == old_id && relay == old_relay) return;
-                if (id) {
-                    var err = handler.test_if_valid_server(id);
-                    if (err) return translate("ID Server") + ": " + err;
-                }
-                if (relay) {
-                    var err = handler.test_if_valid_server(relay);
-                    if (err) return translate("Relay Server") + ": " + err;
-                }
-                configOptions["custom-rendezvous-server"] = id;
-                configOptions["relay-server"] = relay;
-                handler.set_options(configOptions);
-            }, 240);
-*/
         } else if (me.id == "socks5-server") {
             var socks5 = handler.get_socks() || {};
             var old_proxy = socks5[0] || "";
@@ -743,21 +720,6 @@ function download(from, to, args..) {
     view.request(rqp);
 }
 
-// current running version is higher than installed
-class UpgradeMe: Reactor.Component {
-    function render() {
-        var update_or_download = is_osx ? "download" : "update";
-        return <div .install-me>
-            <div>{translate('Status')}</div>
-            <div>{translate('A new update is available.')}</div>
-			<center><button #install-me .button style="height: 30px;">{translate('Upgrade Now')}</button></center>
-        </div>;
-    }
-
-    event click $(#install-me) {
-        handler.update_me("");
-    }
-}
 /*
 class UpdateMe: Reactor.Component {
     function render() {
@@ -773,30 +735,6 @@ class UpdateMe: Reactor.Component {
     event click $(#install-me) {
         handler.open_url("https://www.hoptodesk.com");
         return;
-        if (!is_win) {
-            handler.open_url("https://www.hoptodesk.com");
-            return;
-        }
-        var url = software_update_url + '.' + handler.get_software_ext();
-        var path = handler.get_software_store_path();
-        var onsuccess = function(md5) {
-            $(#download-percent).content(translate("Installing ..."));
-            handler.update_me(path);
-        };
-        var onerror = function(err) {
-            msgbox("custom-error", "Download Error", "Failed to download");
-        };
-        var onprogress = function(loaded, total) {
-            if (!total) total = 5 * 1024 * 1024;
-            var el = $(#download-percent);
-            el.style.set{display: "block"};
-            el.content("Downloading %" + (loaded * 100 / total));
-        };
-        stdout.println("Downloading " + url + " to " + path);
-        http.download(
-            url,
-            self.url(path),
-            onsuccess, onerror, onprogress);
     }
 }
 */

@@ -292,6 +292,7 @@ pub fn remove(id: i32) {
 	CLIENTS.write().unwrap().remove(&id);
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn close_incoming(id: &str) {
     CLIENTS.write().unwrap().retain(|_, client| {
         if client.peer_id == id {
@@ -302,7 +303,7 @@ fn close_incoming(id: &str) {
     });
 }
 
-
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn tell_sessions(body: String, myid: String, client_ids: String) {
 	let url = format!(
         "https://api.hoptodesk.com/?teamid={}&id={}&clientidslist={}", body, myid, client_ids
@@ -466,7 +467,8 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     log::info!("cm ipc connection closed from connection request");
                                     break;
                                 }
-                                Data::CloseIncoming { id } => {
+                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+								Data::CloseIncoming { id } => {
                                     close_incoming(&id);
                                 }
                                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -478,7 +480,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     log::info!("cm ipc connection disconnect");
                                     break;
                                 }
-                                Data::PrivacyModeState((_id, _)) => {
+                                Data::PrivacyModeState((_id, _, _)) => {
                                     #[cfg(windows)]
                                     cm_inner_send(_id, data);
                                 }
@@ -565,7 +567,8 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                     }
                 }
                 Some(data) = self.rx.recv() => {
-                    if self.stream.send(&data).await.is_err() {
+                    if let Err(e) = self.stream.send(&data).await {
+                        log::error!("error encountered in IPC task, quitting: {}", e);
                         break;
                     }
                     match &data {
@@ -647,17 +650,6 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 pub async fn start_ipc<T: InvokeUiCM>(cm: ConnectionManager<T>) {
-    #[cfg(windows)]
-    std::thread::spawn(move || {
-        log::info!("try create privacy mode window");
-        if let Err(e) = crate::platform::windows::check_update_broker_process() {
-            log::warn!(
-                "Failed to check update broker process. Privacy mode may not work properly. {}",
-                e
-            );
-        }
-    });
-
     #[cfg(any(
         target_os = "windows",
         all(

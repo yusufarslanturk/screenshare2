@@ -304,7 +304,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Unsupported", "Neatbalstīts"),
         ("Peer denied", "Sesija noraidīta"),
         ("Please install plugins", "Lūdzu, instalējiet spraudņus"),
-        ("Peer exit", "Iziet no attālās ierīces"),
+        ("The peer has exited from Privacy Mode.", "Iziet no attālās ierīces"),
         ("Failed to turn off", "Neizdevās izslēgt"),
         ("Turned off", "Izslēgts"),
         ("In privacy mode", "Privātuma režīmā"),
@@ -565,7 +565,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Open in new window", "Atvērt jaunā logā"),
         ("Show displays as individual windows", "Rādīt displejus kā atsevišķus logus"),
         ("Use all my displays for the remote session", "Izmantot visus manus displejus attālajai sesijai"),
-        ("selinux_tip", "Jūsu ierīcē ir iespējots SELinux, kas var neļaut RustDesk pareizi darboties kā kontrolētajai pusei."),
+        ("selinux_tip", "Jūsu ierīcē ir iespējots SELinux, kas var neļaut HopToDesk pareizi darboties kā kontrolētajai pusei."),
         ("Change view", "Mainīt skatu"),
         ("Big tiles", "Lielas flīzes"),
         ("Small tiles", "Mazas flīzes"),
@@ -588,6 +588,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
 		("Your Security Code", "Jūsu drošības kods"),
 		("ID (Click to Copy)", "ID (noklikšķiniet, lai kopētu)"),		
 		("Password (Click to Copy)", "Parole (noklikšķiniet, lai kopētu)"),
-		("Unattended Access", "Bez uzraudzības piekļuve"),				
+		("Unattended Access", "Bez Uzraudzības Piekļuve"),				
     ].iter().cloned().collect();
 }

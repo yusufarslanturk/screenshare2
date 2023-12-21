@@ -1,6 +1,6 @@
 use hbb_common::socket_client;
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{SocketAddr};
 
 const PROTOCOL: &str = "one-to-one";
 

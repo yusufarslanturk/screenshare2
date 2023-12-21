@@ -331,8 +331,8 @@ class _DraggableState extends State<Draggable> {
 }
 
 class IOSDraggable extends StatefulWidget {
-  const IOSDraggable({
-    Key? key,
+  const IOSDraggable(
+      {Key? key,
     this.position = Offset.zero,
     this.chatModel,
     required this.width,
@@ -416,12 +416,12 @@ class _IOSDraggableState extends State<IOSDraggable> {
               _chatModel?.setChatWindowPosition(_position);
             },
             child: Material(
-              child:
-            Container(
-              width: _width,
-              height: _height,
-              decoration: BoxDecoration(border: Border.all(color: MyTheme.border)),
-              child: widget.builder(context),
+              child: Container(
+                width: _width,
+                height: _height,
+                decoration:
+                    BoxDecoration(border: Border.all(color: MyTheme.border)),
+                child: widget.builder(context),
               ),
             ),
           ),

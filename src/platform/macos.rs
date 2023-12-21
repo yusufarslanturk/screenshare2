@@ -292,10 +292,12 @@ pub fn uninstall_service(show_new_window: bool) -> bool {
                     uninstalled
                 );
                 if uninstalled {
+                    if !show_new_window {
+                        let _ = crate::ipc::close_all_instances();
+                        // leave ipc a little time
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
                     crate::ipc::set_option("stop-service", "Y");
-                    let _ = crate::ipc::close_all_instances();
-                    // leave ipc a little time
-                    std::thread::sleep(std::time::Duration::from_millis(300));
                     std::process::Command::new("launchctl")
                         .args(&["remove", &format!("{}_server", crate::get_full_name())])
                         .status()
@@ -308,11 +310,6 @@ pub fn uninstall_service(show_new_window: bool) -> bool {
                                 crate::get_app_name(),
                             ))
                             .spawn()
-                            .ok();
-                    } else {
-                        std::process::Command::new("pkill")
-                            .arg(crate::get_app_name())
-                            .status()
                             .ok();
                     }
                     quit_gui();
@@ -775,17 +772,16 @@ pub fn elevate(args: Vec<&str>, prompt: &str) -> ResultType<bool> {
     }
 }
 
-pub struct WakeLock(Option<keepawake::AwakeHandle>);
+pub struct WakeLock(Option<()>);
 
 impl WakeLock {
     pub fn new(display: bool, idle: bool, sleep: bool) -> Self {
         WakeLock(
-            keepawake::Builder::new()
-                .display(display)
-                .idle(idle)
-                .sleep(sleep)
-                .create()
-                .ok(),
+			Some(())
         )
     }
+    
+    pub fn set_display(&mut self, display: bool) -> ResultType<()> {
+        Ok(())
+    }       
 }

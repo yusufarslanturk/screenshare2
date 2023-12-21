@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-cargo build --release --target x86_64-apple-ios --features flutter --lib
+cargo build --features flutter --release --target x86_64-apple-ios --lib

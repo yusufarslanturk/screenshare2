@@ -5,8 +5,6 @@ use crate::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use rdev::{Event, EventType::*, KeyCode};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
@@ -43,9 +41,6 @@ use crate::client::{
 use crate::common::GrabState;
 use crate::keyboard;
 use crate::{client::Data, client::Interface};
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub static IS_IN: AtomicBool = AtomicBool::new(false);
 
 const CHANGE_RESOLUTION_VALID_TIMEOUT_SECS: u64 = 15;
 
@@ -319,13 +314,25 @@ impl<T: InvokeUiSession> Session<T> {
         }
     }
 
+    pub fn toggle_privacy_mode(&self, impl_key: String, on: bool) {
+        let mut misc = Misc::new();
+        misc.set_toggle_privacy_mode(TogglePrivacyMode {
+            impl_key,
+            on,
+            ..Default::default()
+        });
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        self.send(Data::Message(msg_out));
+    }
+    
     pub fn get_toggle_option(&self, name: String) -> bool {
         self.lc.read().unwrap().get_toggle_option(&name)
     }
 
     #[cfg(not(feature = "flutter"))]
     pub fn is_privacy_mode_supported(&self) -> bool {
-                log::info!("checking privacy mode ui");
+
 		self.lc.read().unwrap().is_privacy_mode_supported()
     }
 
@@ -347,6 +354,18 @@ impl<T: InvokeUiSession> Session<T> {
         }
     }
 
+    pub fn toggle_virtual_display(&self, index: i32, on: bool) {
+        let mut misc = Misc::new();
+        misc.set_toggle_virtual_display(ToggleVirtualDisplay {
+            display: index,
+            on,
+            ..Default::default()
+        });
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        self.send(Data::Message(msg_out));
+    }
+    
     #[cfg(not(feature = "flutter"))]
     pub fn refresh_video(&self, _display: i32) {
         self.send(Data::Message(LoginConfigHandler::refresh()));
@@ -362,7 +381,7 @@ impl<T: InvokeUiSession> Session<T> {
         ));
     }
 
-    pub fn record_status(&self, status: bool) {
+    pub fn record_status(&self, _status: bool) {
         let misc = Misc::new();
         //misc.set_client_record_status(status);
         let mut msg = Message::new();
@@ -422,12 +441,12 @@ impl<T: InvokeUiSession> Session<T> {
     pub fn alternative_codecs(&self) -> (bool, bool, bool) {
         let decoder = scrap::codec::Decoder::supported_decodings(None);
         let mut vp8 = decoder.ability_vp8 > 0;
-        //let mut av1 = decoder.ability_av1 > 0;
+        let mut av1 = decoder.ability_av1 > 0;
         let mut h264 = decoder.ability_h264 > 0;
         let mut h265 = decoder.ability_h265 > 0;
         let enc = &self.lc.read().unwrap().supported_encoding;
         vp8 = vp8 && enc.vp8;
-        //av1 = av1 && enc.av1;
+        av1 = av1 && enc.av1;
         h264 = h264 && enc.h264;
         h265 = h265 && enc.h265;
         (vp8, h264, h265)
@@ -583,7 +602,7 @@ impl<T: InvokeUiSession> Session<T> {
         return "".to_owned();
     }
 
-    pub fn swab_modifier_key(&self, msg: &mut KeyEvent) {
+    pub fn swap_modifier_key(&self, msg: &mut KeyEvent) {
         let allow_swap_key = self.get_toggle_option("allow_swap_key".to_string());
         if allow_swap_key {
             if let Some(key_event::Union::ControlKey(ck)) = msg.union {
@@ -662,7 +681,7 @@ impl<T: InvokeUiSession> Session<T> {
         // mode: legacy(0), map(1), translate(2), auto(3)
 
         let mut msg = evt.clone();
-        self.swab_modifier_key(&mut msg);
+        self.swap_modifier_key(&mut msg);
         let mut msg_out = Message::new();
         msg_out.set_key_event(msg);
         self.send(Data::Message(msg_out));
@@ -712,13 +731,11 @@ impl<T: InvokeUiSession> Session<T> {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn enter(&self, keyboard_mode: String) {
-        IS_IN.store(true, Ordering::SeqCst);
         keyboard::client::change_grab_status(GrabState::Run, &keyboard_mode);
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn leave(&self, keyboard_mode: String) {
-        IS_IN.store(false, Ordering::SeqCst);
         keyboard::client::change_grab_status(GrabState::Wait, &keyboard_mode);
     }
 
@@ -919,7 +936,7 @@ impl<T: InvokeUiSession> Session<T> {
 
     pub fn send_mouse(
         &self,
-        mask: i32,
+        mut mask: i32,
         x: i32,
         y: i32,
         alt: bool,
@@ -946,6 +963,20 @@ impl<T: InvokeUiSession> Session<T> {
         let (alt, ctrl, shift, command) =
             keyboard::client::get_modifiers_state(alt, ctrl, shift, command);
 
+        use crate::input::*;
+        let is_left = (mask & (MOUSE_BUTTON_LEFT << 3)) > 0;
+        let is_right = (mask & (MOUSE_BUTTON_RIGHT << 3)) > 0;
+        if is_left ^ is_right {
+            let swap_lr = self.get_toggle_option("swap-left-right-mouse".to_string());
+            if swap_lr {
+                if is_left {
+                    mask = (mask & (!(MOUSE_BUTTON_LEFT << 3))) | (MOUSE_BUTTON_RIGHT << 3);
+                } else {
+                    mask = (mask & (!(MOUSE_BUTTON_RIGHT << 3))) | (MOUSE_BUTTON_LEFT << 3);
+                }
+            }
+        }
+        
         send_mouse(mask, x, y, alt, ctrl, shift, command, self);
         // on macos, ctrl + left button down = right button down, up won't emit, so we need to
         // emit up myself if peer is not macos
@@ -1124,7 +1155,7 @@ impl<T: InvokeUiSession> Session<T> {
         match crate::ipc::connect(1000, "").await {
             Ok(mut conn) => {
                 if conn
-                    .send(&crate::ipc::Data::SwitchSidesRequest(self.id.to_string()))
+                    .send(&crate::ipc::Data::SwitchSidesRequest(self.get_id()))
                     .await
                     .is_ok()
                 {
@@ -1153,26 +1184,39 @@ impl<T: InvokeUiSession> Session<T> {
         }
     }
 
-    pub fn handle_peer_switch_display(&self, display: &SwitchDisplay) {
-        self.ui_handler.switch_display(display);
-
-        if self.last_change_display.lock().unwrap().is_the_same_record(
-            display.display,
-            display.width,
-            display.height,
-        ) {
-            let custom_resolution = if display.width != display.original_resolution.width
-                || display.height != display.original_resolution.height
-            {
-                Some((display.width, display.height))
-            } else {
-                None
-            };
+    fn set_custom_resolution(&self, display: &SwitchDisplay) {
+        if display.width == display.original_resolution.width
+            && display.height == display.original_resolution.height
+        {
             self.lc
                 .write()
                 .unwrap()
-                .set_custom_resolution(display.display, custom_resolution);
+                .set_custom_resolution(display.display, None);
+        } else {
+            let last_change_display = self.last_change_display.lock().unwrap();
+            if last_change_display.display == display.display {
+                let wh = if last_change_display.is_the_same_record(
+                    display.display,
+                    display.width,
+                    display.height,
+                ) {
+                    Some((display.width, display.height))
+                } else {
+                    // display origin is changed, or some other events.
+                    None
+                };
+                self.lc
+                    .write()
+                    .unwrap()
+                    .set_custom_resolution(display.display, wh);
+            }
         }
+    }
+
+    #[inline]
+    pub fn handle_peer_switch_display(&self, display: &SwitchDisplay) {
+        self.ui_handler.switch_display(display);
+        self.set_custom_resolution(display);
     }
 
     #[inline]
@@ -1287,7 +1331,7 @@ impl<T: InvokeUiSession> FileManager for Session<T> {}
 
 #[async_trait]
 impl<T: InvokeUiSession> Interface for Session<T> {
-    fn get_login_config_handler(&self) -> Arc<RwLock<LoginConfigHandler>> {
+    fn get_lch(&self) -> Arc<RwLock<LoginConfigHandler>> {
         return self.lc.clone();
     }
 
@@ -1325,7 +1369,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
             if pi.displays.is_empty() {
                 self.lc.write().unwrap().handle_peer_info(&pi);
                 self.update_privacy_mode();
-                self.msgbox("error", "Remote Error", "No Display", "");
+                self.msgbox("error", "Remote Error", "No Displays", "");
                 return;
             }
             self.try_change_init_resolution(pi.current_display);
@@ -1423,7 +1467,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
                 .collect();
         };
     }        
-        
+        /*
     fn set_force_relay(&mut self, direct: bool, received: bool) {
         let mut lc = self.lc.write().unwrap();
         lc.force_relay = false;
@@ -1441,6 +1485,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
     fn is_force_relay(&self) -> bool {
         self.lc.read().unwrap().force_relay
     }
+*/	
 }
 
 impl<T: InvokeUiSession> Session<T> {
@@ -1561,7 +1606,8 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
     let frame_count_map: Arc<RwLock<HashMap<usize, usize>>> = Default::default();
     let frame_count_map_cl = frame_count_map.clone();
     let ui_handler = handler.ui_handler.clone();
-    let (video_sender, audio_sender, video_queue_map, decode_fps_map) = start_video_audio_threads(
+    let (video_sender, audio_sender, video_queue_map, decode_fps_map, chroma) =
+        start_video_audio_threads(
         handler.clone(),
         move |display: usize, data: &mut scrap::ImageRgb| {
             let mut write_lock = frame_count_map_cl.write().unwrap();
@@ -1581,6 +1627,7 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
         sender,
         frame_count_map,
         decode_fps_map,
+        chroma,
     );
     remote.io_loop(&key, &token, round).await;
     remote.sync_jobs_status_to_local().await;

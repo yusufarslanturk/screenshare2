@@ -5,6 +5,7 @@ use std::{
 #[cfg(not(windows))]
 use std::{fs::File, io::prelude::*};
 
+use crate::privacy_mode::PrivacyModeState;
 use bytes::Bytes;
 use parity_tokio_ipc::{
     Connection as Conn, ConnectionClient as ConnClient, Endpoint, Incoming, SecurityAttributes,
@@ -28,16 +29,9 @@ use hbb_common::{
     ResultType,
 };
 
-use crate::rendezvous_mediator::RendezvousMediator;
+//use crate::rendezvous_mediator::RendezvousMediator;
+use crate::{common::is_server, privacy_mode, rendezvous_mediator::RendezvousMediator};
 
-// State with timestamp, because std::time::Instant cannot be serialized
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "t", content = "c")]
-pub enum PrivacyModeState {
-    OffSucceeded,
-    OffByPeer,
-    OffUnknown,
-}
 // IPC actions here.
 pub const IPC_ACTION_CLOSE: &str = "close";
 pub static EXIT_RECV_CLOSE: AtomicBool = AtomicBool::new(true);
@@ -221,7 +215,7 @@ pub enum Data {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     ClipboardFile(ClipboardFile),
     ClipboardFileEnabled(bool),
-    PrivacyModeState((i32, PrivacyModeState)),
+    PrivacyModeState((i32, PrivacyModeState, String)),
     TestRendezvousServer,
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     Keyboard(DataKeyboard),
@@ -250,6 +244,7 @@ pub enum Data {
     FileTransferLog((String, String)),
     #[cfg(windows)]
     ControlledSessionCount(usize),
+    CmErr(String),
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -364,6 +359,9 @@ async fn handle(data: Data, stream: &mut Connection) {
             if EXIT_RECV_CLOSE.load(Ordering::SeqCst) {
                 #[cfg(not(target_os = "android"))]
                 crate::server::input_service::fix_key_down_timeout_at_exit();
+                if is_server() {
+                    let _ = privacy_mode::turn_off_privacy(0, Some(PrivacyModeState::OffByPeer));
+                }
                 std::process::exit(0);
             }
         }

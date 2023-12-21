@@ -569,7 +569,7 @@ pub mod client {
                     bail!("Failed to run portable service process: {}", e);
                 }
             }
-            StartPara::Logon(username, password) => {
+            StartPara::Logon(_username, _password) => {
                 #[allow(unused_mut)]
                 let mut exe = std::env::current_exe()?.to_string_lossy().to_string();
                 #[cfg(feature = "flutter")]
@@ -588,13 +588,13 @@ pub mod client {
                             .home_dir()
                             .join("AppData")
                             .join("Local")
-                            .join("rustdesk-sciter");
+                            .join("hoptodesk-sciter");
                         if std::fs::create_dir_all(&dir).is_ok() {
-                            let dst = dir.join("rustdesk.exe");
+                            let dst = dir.join("hoptodesk.exe");
                             if std::fs::copy(&exe, &dst).is_ok() {
                                 if dst.exists() {
                                     if set_path_permission(&dir, "RX").is_ok() {
-                                        exe = dst.to_string_lossy().to_string();
+                                        //exe = dst.to_string_lossy().to_string();
                                     }
                                 }
                             }
@@ -621,7 +621,7 @@ pub mod client {
         let mut lock = SHMEM.lock().unwrap();
         if lock.is_some() {
             *lock = None;
-            log::info!("drop shared memory");
+            //log::info!("drop shared memory");
         }
     }
 
@@ -877,15 +877,7 @@ pub mod client {
         }
         if portable_service_running {
             log::info!("Create shared memory capturer");
-            if current_display == *display_service::PRIMARY_DISPLAY_IDX {
-                return Ok(Box::new(CapturerPortable::new(current_display)));
-            } else {
-                bail!(
-                    "Ignore capture display index: {}, the primary display index is: {}",
-                    current_display,
-                    *display_service::PRIMARY_DISPLAY_IDX
-                );
-            }
+            return Ok(Box::new(CapturerPortable::new(current_display)));
         } else {
             log::debug!("Create capturer dxgi|gdi");
             return Ok(Box::new(

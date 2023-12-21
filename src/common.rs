@@ -861,8 +861,10 @@ pub fn hostname() -> String {
 /*
 #[inline]
 pub fn get_sysinfo() -> serde_json::Value {
-    use hbb_common::sysinfo::{System};
-    let system = System::new_all();
+    use hbb_common::sysinfo::System;
+    let mut system = System::new();
+    system.refresh_memory();
+    system.refresh_cpu();
     let memory = system.total_memory();
     let memory = (memory as f64 / 1024. / 1024. / 1024. * 100.).round() / 100.;
     let cpus = system.cpus();
@@ -897,7 +899,10 @@ pub fn get_sysinfo() -> serde_json::Value {
     });
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        out["username"] = json!(crate::platform::get_active_username());
+        let username = crate::platform::get_active_username();
+        if !username.is_empty() && (!cfg!(windows) || username != "SYSTEM") {
+            out["username"] = json!(username);
+        }
     }
     out
 }
@@ -1112,10 +1117,12 @@ pub async fn get_request_sync(url: String, header: &str) -> ResultType<String> {
 pub fn make_privacy_mode_msg_with_details(
     state: back_notification::PrivacyModeState,
     details: String,
+    impl_key: String,
 ) -> Message {
     let mut misc = Misc::new();
     let mut back_notification = BackNotification {
         details,
+        impl_key,
         ..Default::default()
     };
     back_notification.set_privacy_mode_state(state);
@@ -1126,11 +1133,15 @@ pub fn make_privacy_mode_msg_with_details(
 }
 
 #[inline]
-pub fn make_privacy_mode_msg(state: back_notification::PrivacyModeState) -> Message {
-    make_privacy_mode_msg_with_details(state, "".to_owned())
+pub fn make_privacy_mode_msg(state: back_notification::PrivacyModeState, impl_key: String) -> Message {
+    make_privacy_mode_msg_with_details(state, "".to_owned(), impl_key)
 }
 
-pub fn is_keyboard_mode_supported(keyboard_mode: &KeyboardMode, version_number: i64, peer_platform: &str) -> bool {
+pub fn is_keyboard_mode_supported(
+    keyboard_mode: &KeyboardMode,
+    version_number: i64,
+    peer_platform: &str,
+) -> bool {
     match keyboard_mode {
         KeyboardMode::Legacy => true,
         KeyboardMode::Map => {

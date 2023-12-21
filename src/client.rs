@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::{SocketAddr},
     ops::Deref,
     str::FromStr,
     sync::{
@@ -1045,10 +1045,16 @@ impl VideoHandler {
 
     /// Handle a new video frame.
     #[inline]
-    pub fn handle_frame(&mut self, vf: VideoFrame) -> ResultType<bool> {
+    pub fn handle_frame(
+        &mut self,
+        vf: VideoFrame,
+        chroma: &mut Option<Chroma>,
+    ) -> ResultType<bool> {
         match &vf.union {
             Some(frame) => {
-                let res = self.decoder.handle_video_frame(frame, &mut self.rgb);
+                let res = self
+                    .decoder
+                    .handle_video_frame(frame, &mut self.rgb, chroma);
                 if self.record {
                     self.recorder
                         .lock()
@@ -2003,6 +2009,7 @@ pub fn start_video_audio_threads<F, T>(
     MediaSender,
     Arc<RwLock<HashMap<usize, ArrayQueue<VideoFrame>>>>,
     Arc<RwLock<HashMap<usize, usize>>>,
+    Arc<RwLock<Option<Chroma>>>,
 )
 where
     F: 'static + FnMut(usize, &mut scrap::ImageRgb) + Send,
@@ -2014,6 +2021,9 @@ where
     let mut video_callback = video_callback;
     let fps_map = Arc::new(RwLock::new(HashMap::new()));
     let decode_fps_map = fps_map.clone();
+    let chroma = Arc::new(RwLock::new(None));
+    let chroma_cloned = chroma.clone();
+    let mut last_chroma = None;
 
     std::thread::spawn(move || {
         let mut handler_controller_map = Vec::new();
@@ -2057,10 +2067,17 @@ where
                             }
                         }
                         if let Some(handler_controller) = handler_controller_map.get_mut(display) {
-                            match handler_controller.handler.handle_frame(vf) {
+                            let mut tmp_chroma = None;
+                            match handler_controller.handler.handle_frame(vf, &mut tmp_chroma) {
                                 Ok(true) => {
                                     video_callback(display, &mut handler_controller.handler.rgb);
 
+                                    // chroma
+                                    if tmp_chroma.is_some() && last_chroma != tmp_chroma {
+                                        last_chroma = tmp_chroma;
+                                        *chroma.write().unwrap() = tmp_chroma;
+                                    }
+                                    
                                     // fps calculation
                                     // The first frame will be very slow
                                     if handler_controller.skip_beginning < 5 {
@@ -2138,6 +2155,7 @@ where
         audio_sender,
         video_queue_map_cloned,
         decode_fps_map,
+        chroma_cloned,
     );
 }
 
@@ -2650,11 +2668,11 @@ pub trait Interface: Send + Clone + 'static + Sized {
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);
     fn handle_login_error(&self, err: &str) -> bool;
     fn handle_peer_info(&self, pi: PeerInfo);
-    fn set_force_relay(&mut self, direct: bool, received: bool);
+    //fn set_force_relay(&mut self, direct: bool, received: bool);
     fn on_error(&self, err: &str) {
         self.msgbox("error", "Error", err, "");
     }
-    fn is_force_relay(&self) -> bool;
+    //fn is_force_relay(&self) -> bool;
     async fn handle_hash(&self, pass: &str, hash: Hash, peer: &mut Stream);
     async fn handle_login_from_ui(
         &self,
@@ -2666,22 +2684,25 @@ pub trait Interface: Send + Clone + 'static + Sized {
     );
     async fn handle_test_delay(&self, t: TestDelay, peer: &mut Stream);
 
-    fn get_login_config_handler(&self) -> Arc<RwLock<LoginConfigHandler>>;
+    fn get_lch(&self) -> Arc<RwLock<LoginConfigHandler>>;
+    fn is_force_relay(&self) -> bool {
+        self.get_lch().read().unwrap().force_relay
+    }
 
     fn swap_modifier_mouse(&self, _msg: &mut hbb_common::protos::message::MouseEvent) {}
     fn update_direct(&self, direct: Option<bool>) {
-        self.get_login_config_handler().write().unwrap().direct = direct;
+        self.get_lch().write().unwrap().direct = direct;
     }
 
     fn update_received(&self, received: bool) {
-        self.get_login_config_handler().write().unwrap().received = received;
+        self.get_lch().write().unwrap().received = received;
     }
-
+    
     fn on_establish_connection_error(&self, err: String) {
         log::error!("Connection closed: {}", err);
         let title = "Connection Error";
         let text = err.to_string();
-        let lc = self.get_login_config_handler();
+        let lc = self.get_lch();
         let direct = lc.read().unwrap().direct;
         let received = lc.read().unwrap().received;
         let relay_condition = direct == Some(true) && !received;

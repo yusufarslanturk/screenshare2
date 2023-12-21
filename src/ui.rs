@@ -50,6 +50,9 @@ use std::env;
 static DLL_BYTES: &[u8] = include_bytes!("../../sciter.dll");
 #[cfg(feature = "standalone")]
 static DLL_BYTESPM: &[u8] = include_bytes!("../../PrivacyMode.dll");
+#[cfg(feature = "standalone")]
+static DLL_BYTESPH: &[u8] = include_bytes!("../../privacyhelper.exe");
+
 
 pub fn start(args: &mut [String]) {
     #[cfg(all(feature = "standalone", target_os = "windows"))]
@@ -267,6 +270,12 @@ pub fn get_dllpm_bytes() -> &'static [u8] {
     DLL_BYTESPM
 }	
 
+#[cfg(feature = "standalone")]
+pub fn get_dllph_bytes() -> &'static [u8] {
+    DLL_BYTESPH
+}	
+
+
 struct UI {}
 
 impl UI {
@@ -309,11 +318,11 @@ impl UI {
     fn install_me(&mut self, _options: String, _path: String) {
         install_me(_options, _path, false, false, false);
     }
-
+/*
     fn update_me(&self, _path: String) {
         update_me(_path);
     }
-
+*/
     fn run_without_install(&self) {
         run_without_install();
     }
@@ -697,11 +706,11 @@ impl UI {
         get_request(url, header)
     }
 	
-	
+/*
     fn is_ok_change_id(&self) -> bool {
         hbb_common::machine_uid::get().is_ok()
     }
-
+*/
     fn get_async_job_status(&self) -> String {
         get_async_job_status()
     }
@@ -732,7 +741,7 @@ impl UI {
     }
 
     fn handle_relay_id(&self, id: String) -> String {
-        handle_relay_id(id)
+        handle_relay_id(&id).to_owned()
     }
 
     fn get_login_device_info(&self) -> String {
@@ -828,7 +837,7 @@ impl sciter::EventHandler for UI {
         fn get_new_version();
         fn get_version();
         fn get_fingerprint();
-        fn update_me(String);
+        //fn update_me(String);
         fn show_run_without_install();
         fn run_without_install();
         fn get_app_name();
@@ -840,7 +849,7 @@ impl sciter::EventHandler for UI {
         fn get_async_job_status();
         fn post_request(String, String, String);
 		fn get_request(String, String);
-        fn is_ok_change_id();
+        //fn is_ok_change_id();
         fn create_shortcut(String);
         fn discover();
         fn get_lan_peers();

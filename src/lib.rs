@@ -59,8 +59,7 @@ mod ui_session_interface;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod clipboard_file;
 
-#[cfg(windows)]
-pub mod privacy_win_mag;
+pub mod privacy_mode;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod two_factor_auth;

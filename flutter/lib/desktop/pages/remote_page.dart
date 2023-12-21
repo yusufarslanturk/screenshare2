@@ -8,7 +8,7 @@ import 'package:flutter_custom_cursor/cursor_manager.dart'
     as custom_cursor_manager;
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
-import 'package:wakelock/wakelock.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:flutter_custom_cursor/flutter_custom_cursor.dart';
 import 'package:flutter_improved_scrolling/flutter_improved_scrolling.dart';
 
@@ -17,6 +17,7 @@ import '../../common/widgets/overlay.dart';
 import '../../common/widgets/remote_input.dart';
 import '../../common.dart';
 import '../../common/widgets/dialog.dart';
+import '../../common/widgets/toolbar.dart';
 import '../../models/model.dart';
 import '../../models/desktop_render_texture.dart';
 import '../../models/platform_model.dart';
@@ -80,7 +81,7 @@ class _RemotePageState extends State<RemotePage>
   late RxBool _keyboardEnabled;
   final Map<int, RenderTexture> _renderTextures = {};
 
-  final _blockableOverlayState = BlockableOverlayState();
+  var _blockableOverlayState = BlockableOverlayState();
 
   final FocusNode _rawKeyFocusNode = FocusNode(debugLabel: "rawkeyFocusNode");
 
@@ -123,7 +124,7 @@ class _RemotePageState extends State<RemotePage>
           .showLoading(translate('Connecting...'), onCancel: closeConnection);
     });
     if (!Platform.isLinux) {
-      Wakelock.enable();
+      WakelockPlus.enable();
     }
 
     _ffi.ffiModel.updateEventListener(sessionId, widget.id);
@@ -183,7 +184,7 @@ class _RemotePageState extends State<RemotePage>
       _isWindowBlur = false;
     }
     if (!Platform.isLinux) {
-      Wakelock.enable();
+      WakelockPlus.enable();
     }
   }
 
@@ -192,7 +193,7 @@ class _RemotePageState extends State<RemotePage>
   void onWindowMaximize() {
     super.onWindowMaximize();
     if (!Platform.isLinux) {
-      Wakelock.enable();
+      WakelockPlus.enable();
     }
   }
 
@@ -200,7 +201,7 @@ class _RemotePageState extends State<RemotePage>
   void onWindowMinimize() {
     super.onWindowMinimize();
     if (!Platform.isLinux) {
-      Wakelock.disable();
+      WakelockPlus.disable();
     }
   }
 
@@ -228,7 +229,7 @@ class _RemotePageState extends State<RemotePage>
           overlays: SystemUiOverlay.values);
     }
     if (!Platform.isLinux) {
-      await Wakelock.disable();
+      await WakelockPlus.disable();
     }
     await Get.delete<FFI>(tag: widget.id);
     removeSharedStates(widget.id);
@@ -844,10 +845,14 @@ class CursorPaint extends StatelessWidget {
         debugPrint('unreachable! The displays rect is null.');
         return Container();
       }
-      final imageWidth = rect.width * c.scale;
-      final imageHeight = rect.height * c.scale;
-      cx = -imageWidth * c.scrollX;
-      cy = -imageHeight * c.scrollY;
+      if (cx < 0) {
+        final imageWidth = rect.width * c.scale;
+        cx = -imageWidth * c.scrollX;
+      }
+      if (cy < 0) {
+        final imageHeight = rect.height * c.scale;
+        cy = -imageHeight * c.scrollY;
+      }
     }
 
     double x = (m.x - hotx) * c.scale + cx;

@@ -453,7 +453,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     }
 
     toolbarItems.add(Obx(() {
-      if (PrivacyModeState.find(widget.id).isFalse &&
+      if (PrivacyModeState.find(widget.id).isEmpty &&
           pi.displaysCount.value > 1) {
         return _MonitorMenu(
             id: widget.id,
@@ -1427,7 +1427,7 @@ class _KeyboardMenu extends StatelessWidget {
           Divider(),
           viewMode(),
           Divider(),
-          reverseMouseWheel(),
+//          reverseMouseWheel(),
         ]);
   }
 
@@ -1515,7 +1515,7 @@ class _KeyboardMenu extends StatelessWidget {
         ffi: ffi,
         child: Text(translate('View Mode')));
   }
-
+/*
   reverseMouseWheel() {
     return futureBuilder(future: () async {
       final v =
@@ -1539,6 +1539,7 @@ class _KeyboardMenu extends StatelessWidget {
           ffi: ffi);
     });
   }
+*/
 }
 
 class _ChatMenu extends StatefulWidget {

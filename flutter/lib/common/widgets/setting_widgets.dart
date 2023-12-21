@@ -2,6 +2,7 @@ import 'package:debounce_throttle/debounce_throttle.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
 
@@ -10,11 +11,19 @@ customImageQualityWidget(
     required double initFps,
     required Function(double) setQuality,
     required Function(double) setFps,
-    required bool showFps}) {
+    required bool showFps,
+    required bool showMoreQuality}) {
+  if (initQuality < kMinQuality ||
+      initQuality > (showMoreQuality ? kMaxMoreQuality : kMaxQuality)) {
+    initQuality = kDefaultQuality;
+  }
+  if (initFps < kMinFps || initFps > kMaxFps) {
+    initFps = kDefaultFps;
+  }
   final qualityValue = initQuality.obs;
   final fpsValue = initFps.obs;
 
-  final RxBool moreQualityChecked = RxBool(qualityValue.value > 100);
+  final RxBool moreQualityChecked = RxBool(qualityValue.value > kMaxQuality);
   final debouncerQuality = Debouncer<double>(
     Duration(milliseconds: 1000),
     onChanged: (double v) {
@@ -47,9 +56,11 @@ customImageQualityWidget(
                 flex: 3,
                 child: Slider(
                   value: qualityValue.value,
-                  min: 10.0,
-                  max: moreQualityChecked.value ? 2000 : 100,
-                  divisions: moreQualityChecked.value ? 199 : 18,
+                  min: kMinQuality,
+                  max: moreQualityChecked.value ? kMaxMoreQuality : kMaxQuality,
+                  divisions: moreQualityChecked.value
+                      ? ((kMaxMoreQuality - kMinQuality) / 10).round()
+                      : ((kMaxQuality - kMinQuality) / 5).round(),
                   onChanged: (double value) async {
                     qualityValue.value = value;
                     debouncerQuality.value = value;
@@ -69,7 +80,7 @@ customImageQualityWidget(
                     style: const TextStyle(fontSize: 15),
                   )),
               // mobile doesn't have enough space
-              if (!isMobile)
+              if (showMoreQuality && !isMobile)
                 Expanded(
                     flex: 1,
                     child: Row(
@@ -85,7 +96,7 @@ customImageQualityWidget(
                     ))
             ],
           )),
-      if (isMobile)
+      if (showMoreQuality && isMobile)
         Obx(() => Row(
               children: [
                 Expanded(
@@ -109,9 +120,9 @@ customImageQualityWidget(
                   flex: 3,
                   child: Slider(
                     value: fpsValue.value,
-                    min: 5.0,
-                    max: 120.0,
-                    divisions: 23,
+                    min: kMinFps,
+                    max: kMaxFps,
+                    divisions: ((kMaxFps - kMinFps) / 5).round(),
                     onChanged: (double value) async {
                       fpsValue.value = value;
                       debouncerFps.value = value;
@@ -141,15 +152,10 @@ customImageQualitySetting() {
   final fpsKey = 'custom-fps';
 
   var initQuality =
-      (double.tryParse(bind.mainGetUserDefaultOption(key: qualityKey)) ?? 50.0);
-  if (initQuality < 10 || initQuality > 2000) {
-    initQuality = 50;
-  }
-  var initFps =
-      (double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ?? 30.0);
-  if (initFps < 5 || initFps > 120) {
-    initFps = 30;
-  }
+      (double.tryParse(bind.mainGetUserDefaultOption(key: qualityKey)) ??
+          kDefaultQuality);
+  var initFps = (double.tryParse(bind.mainGetUserDefaultOption(key: fpsKey)) ??
+      kDefaultFps);
 
   return customImageQualityWidget(
       initQuality: initQuality,
@@ -160,59 +166,8 @@ customImageQualitySetting() {
       setFps: (v) {
         bind.mainSetUserDefaultOption(key: fpsKey, value: v.toString());
       },
-      showFps: true);
-}
-
-Future<bool> setServerConfig(
-  List<TextEditingController> controllers,
-  List<RxString> errMsgs,
-  ServerConfig config,
-) async {
-  config.idServer = config.idServer.trim();
-  config.relayServer = config.relayServer.trim();
-  config.apiServer = config.apiServer.trim();
-  config.key = config.key.trim();
-  // id
-  if (config.idServer.isNotEmpty) {
-    errMsgs[0].value =
-        translate(await bind.mainTestIfValidServer(server: config.idServer));
-    if (errMsgs[0].isNotEmpty) {
-      return false;
-    }
-  }
-  // relay
-  if (config.relayServer.isNotEmpty) {
-    errMsgs[1].value =
-        translate(await bind.mainTestIfValidServer(server: config.relayServer));
-    if (errMsgs[1].isNotEmpty) {
-      return false;
-    }
-  }
-  // api
-  if (config.apiServer.isNotEmpty) {
-    if (!config.apiServer.startsWith('http://') &&
-        !config.apiServer.startsWith('https://')) {
-      errMsgs[2].value =
-          '${translate("API Server")}: ${translate("invalid_http")}';
-      return false;
-    }
-  }
-  final oldApiServer = await bind.mainGetApiServer();
-
-  // should set one by one
-  await bind.mainSetOption(
-      key: 'custom-rendezvous-server', value: config.idServer);
-  await bind.mainSetOption(key: 'relay-server', value: config.relayServer);
-  await bind.mainSetOption(key: 'api-server', value: config.apiServer);
-  await bind.mainSetOption(key: 'key', value: config.key);
-
-  final newApiServer = await bind.mainGetApiServer();
-  if (oldApiServer.isNotEmpty &&
-      oldApiServer != newApiServer &&
-      gFFI.userModel.isLogin) {
-    gFFI.userModel.logOut(apiServer: oldApiServer);
-  }
-  return true;
+      showFps: true,
+      showMoreQuality: true);
 }
 
 List<Widget> ServerConfigImportExportWidgets(
@@ -221,33 +176,7 @@ List<Widget> ServerConfigImportExportWidgets(
 ) {
   import() {
     Clipboard.getData(Clipboard.kTextPlain).then((value) {
-      final text = value?.text;
-      if (text != null && text.isNotEmpty) {
-        try {
-          final sc = ServerConfig.decode(text);
-          if (sc.idServer.isNotEmpty) {
-            controllers[0].text = sc.idServer;
-            controllers[1].text = sc.relayServer;
-            controllers[2].text = sc.apiServer;
-            controllers[3].text = sc.key;
-            Future<bool> success = setServerConfig(controllers, errMsgs, sc);
-            success.then((value) {
-              if (value) {
-                showToast(
-                    translate('Import server configuration successfully'));
-              } else {
-                showToast(translate('Invalid server configuration'));
-              }
-            });
-          } else {
-            showToast(translate('Invalid server configuration'));
-          }
-        } catch (e) {
-          showToast(translate('Invalid server configuration'));
-        }
-      } else {
-        showToast(translate('Clipboard is empty'));
-      }
+      importConfig(controllers, errMsgs, value?.text);
     });
   }
 
@@ -265,7 +194,7 @@ List<Widget> ServerConfigImportExportWidgets(
 
   return [
     Tooltip(
-      message: translate('Import Server Config'),
+      message: translate('Import server config'),
       child: IconButton(
           icon: Icon(Icons.paste, color: Colors.grey), onPressed: import),
     ),

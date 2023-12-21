@@ -7,12 +7,8 @@ use crate::virtual_display_manager;
 use hbb_common::get_version_number;
 use hbb_common::protobuf::MessageField;
 use scrap::Display;
-#[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicBool, Ordering};
 
 // https://github.com/rustdesk/rustdesk/discussions/6042, avoiding dbus call
-#[cfg(target_os = "linux")]
-pub(super) static IS_X11: AtomicBool = AtomicBool::new(false);
 
 pub const NAME: &'static str = "display";
 
@@ -28,7 +24,7 @@ lazy_static::lazy_static! {
     static ref IS_CAPTURER_MAGNIFIER_SUPPORTED: bool = is_capturer_mag_supported();
     static ref CHANGED_RESOLUTIONS: Arc<RwLock<HashMap<String, ChangedResolution>>> = Default::default();
     // Initial primary display index.
-    // It should only be updated when the rustdesk server is started, and should not be updated when displays changed.
+    // It should should not be updated when displays changed.
     pub static ref PRIMARY_DISPLAY_IDX: usize = get_primary();
     static ref SYNC_DISPLAYS: Arc<Mutex<SyncDisplaysInfo>> = Default::default();
 }
@@ -142,12 +138,10 @@ pub fn capture_cursor_embedded() -> bool {
 }
 
 #[inline]
-pub fn is_privacy_mode_supported() -> bool {
-	#[cfg(windows)]
+#[cfg(windows)]
+pub fn is_privacy_mode_mag_supported() -> bool {
     return *IS_CAPTURER_MAGNIFIER_SUPPORTED
         && get_version_number(&crate::VERSION) > get_version_number("1.1.9");
-    #[cfg(not(windows))]
-    return false;
 }
 
 pub fn new() -> GenericService {
@@ -174,7 +168,7 @@ fn displays_to_msg(displays: Vec<DisplayInfo>) -> Message {
             pi.platform_additions = serde_json::to_string(&platform_additions).unwrap_or("".into());
         }
     }
-    
+
     // current_display should not be used in server.
     // It is set to 0 for compatibility with old clients.
     pi.current_display = 0;
@@ -184,7 +178,17 @@ fn displays_to_msg(displays: Vec<DisplayInfo>) -> Message {
 }
 
 fn check_get_displays_changed_msg() -> Option<Message> {
+    #[cfg(target_os = "linux")]
+    {
+        if !is_x11() {
+            return get_displays_msg();
+        }
+    }
     check_update_displays(&try_get_displays().ok()?);
+    get_displays_msg()
+}
+
+fn get_displays_msg() -> Option<Message> {
     let displays = SYNC_DISPLAYS.lock().unwrap().get_update_sync_displays()?;
     Some(displays_to_msg(displays))
 }
@@ -354,7 +358,10 @@ pub fn try_get_displays() -> ResultType<Vec<Display>> {
 #[cfg(all(windows, feature = "virtual_display_driver"))]
 pub fn try_get_displays() -> ResultType<Vec<Display>> {
     let mut displays = Display::all()?;
-    if crate::platform::is_installed() && no_displays(&displays) {
+    if crate::platform::is_installed()
+        && no_displays(&displays)
+        && virtual_display_manager::is_virtual_display_supported()
+    {
         log::debug!("no displays, create virtual display");
         if let Err(e) = virtual_display_manager::plug_in_headless() {
             log::error!("plug in headless failed {}", e);

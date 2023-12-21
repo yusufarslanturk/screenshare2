@@ -74,6 +74,7 @@ pub struct Remote<T: InvokeUiSession> {
     elevation_requested: bool,
     fps_control_map: HashMap<usize, FpsControl>,
     decode_fps_map: Arc<RwLock<HashMap<usize, usize>>>,
+    chroma: Arc<RwLock<Option<Chroma>>>,
 }
 
 impl<T: InvokeUiSession> Remote<T> {
@@ -86,6 +87,7 @@ impl<T: InvokeUiSession> Remote<T> {
         sender: mpsc::UnboundedSender<Data>,
         frame_count_map: Arc<RwLock<HashMap<usize, usize>>>,
         decode_fps: Arc<RwLock<HashMap<usize, usize>>>,
+        chroma: Arc<RwLock<Option<Chroma>>>,
     ) -> Self {
         Self {
             handler,
@@ -111,6 +113,7 @@ impl<T: InvokeUiSession> Remote<T> {
             elevation_requested: false,
             fps_control_map: Default::default(),
             decode_fps_map: decode_fps,
+            chroma,
         }
     }
 
@@ -242,9 +245,17 @@ impl<T: InvokeUiSession> Remote<T> {
                                 // Correcting the inaccuracy of status_timer
                                 (k.clone(), (*v as i32) * 1000 / elapsed as i32)
                             }).collect::<HashMap<usize, i32>>();
+                            let chroma = self.chroma.read().unwrap().clone();
+                            let chroma = match chroma {
+                                Some(Chroma::I444) => "4:4:4",
+                                Some(Chroma::I420) => "4:2:0",
+                                None => "-",
+                            };
+                            let chroma = Some(chroma.to_string());
                             self.handler.update_quality_status(QualityStatus {
                                 speed: Some(speed),
                                 fps,
+                                chroma,
                                 ..Default::default()
                             });
                         }
@@ -910,6 +921,24 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
+    async fn send_toggle_privacy_mode_msg(&self, peer: &mut Stream) {
+        let lc = self.handler.lc.read().unwrap();
+        if lc.version >= hbb_common::get_version_number("1.2.4")
+            && lc.get_toggle_option("privacy-mode")
+        {
+            let impl_key = lc.get_option("privacy-mode-impl-key");
+            let mut misc = Misc::new();
+            misc.set_toggle_privacy_mode(TogglePrivacyMode {
+                impl_key,
+                on: true,
+                ..Default::default()
+            });
+            let mut msg_out = Message::new();
+            msg_out.set_misc(misc);
+            allow_err!(peer.send(&msg_out).await);
+        }
+    }
+    
     fn contains_key_frame(vf: &VideoFrame) -> bool {
         use video_frame::Union::*;
         match &vf.union {
@@ -920,6 +949,7 @@ impl<T: InvokeUiSession> Remote<T> {
             None => false,
         }
     }
+
     #[inline]
     fn fps_control(&mut self, direct: bool) {
         let custom_fps = self.handler.lc.read().unwrap().custom_fps.clone();
@@ -1009,6 +1039,7 @@ impl<T: InvokeUiSession> Remote<T> {
                         self.handler.close_success();
                         self.handler.adapt_size();
                         self.send_opts_after_login(peer).await;
+                        self.send_toggle_privacy_mode_msg(peer).await;
                     }
                     let incoming_format = CodecFormat::from(&vf);
                     if self.video_format != incoming_format {
@@ -1540,6 +1571,7 @@ impl<T: InvokeUiSession> Remote<T> {
                     .handle_back_msg_privacy_mode(
                         state.enum_value_or(back_notification::PrivacyModeState::PrvStateUnknown),
                         notification.details,
+                        notification.impl_key,
                     )
                     .await
                 {
@@ -1598,9 +1630,20 @@ impl<T: InvokeUiSession> Remote<T> {
     }
 
     #[inline(always)]
-    fn update_privacy_mode(&mut self, on: bool) {
+    fn update_privacy_mode(&mut self, impl_key: String, on: bool) {
         let mut config = self.handler.load_config();
         config.privacy_mode.v = on;
+        if on {
+            // For compatibility, version < 1.2.4, the default value is 'privacy_mode_impl_mag'.
+            let impl_key = if impl_key.is_empty() {
+                "privacy_mode_impl_mag".to_string()
+            } else {
+                impl_key
+            };
+            config
+                .options
+                .insert("privacy-mode-impl-key".to_string(), impl_key);
+        }
         self.handler.save_config(config);
 
         self.handler.update_privacy_mode();
@@ -1610,6 +1653,7 @@ impl<T: InvokeUiSession> Remote<T> {
         &mut self,
         state: back_notification::PrivacyModeState,
         details: String,
+        impl_key: String,
     ) -> bool {
         match state {
             back_notification::PrivacyModeState::PrvOnByOther => {
@@ -1624,27 +1668,27 @@ impl<T: InvokeUiSession> Remote<T> {
             back_notification::PrivacyModeState::PrvNotSupported => {
                 self.handler
                     .msgbox("custom-error", "Privacy Mode", "Unsupported", "");
-                self.update_privacy_mode(false);
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOnSucceeded => {
                 self.handler
-                    .msgbox("custom-nocancel", "Privacy mode", "Privacy Mode turned on.", "");
-                self.update_privacy_mode(true);
+                    .msgbox("custom-nocancel", "Privacy Mode", "Privacy Mode started.", "");
+                self.update_privacy_mode(impl_key, true);
             }
             back_notification::PrivacyModeState::PrvOnFailedDenied => {
                 self.handler
-                    .msgbox("custom-error", "Privacy mode", "Peer denied", "");
-                self.update_privacy_mode(false);
+                    .msgbox("custom-error", "Privacy Mode", "Peer denied", "");
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOnFailedPlugin => {
                 self.handler
-                    .msgbox("custom-error", "Privacy mode", "Please install plugins", "");
-                self.update_privacy_mode(false);
+                    .msgbox("custom-error", "Privacy Mode", "Please install plugins", "");
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOnFailed => {
                 self.handler.msgbox(
                     "custom-error",
-                    "Privacy mode",
+                    "Privacy Mode",
                     if details.is_empty() {
                         "Failed"
                     } else {
@@ -1652,22 +1696,22 @@ impl<T: InvokeUiSession> Remote<T> {
                     },
                     "",
                 );
-                self.update_privacy_mode(false);
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOffSucceeded => {
                 self.handler
                     .msgbox("custom-nocancel", "Privacy Mode", "Privacy Mode turned off.", "");
-                self.update_privacy_mode(false);
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOffByPeer => {
                 self.handler
                     .msgbox("custom-error", "Privacy Mode", "The peer has exited from Privacy Mode.", "");
-                self.update_privacy_mode(false);
+                self.update_privacy_mode(impl_key, false);
             }
             back_notification::PrivacyModeState::PrvOffFailed => {
                 self.handler.msgbox(
                     "custom-error",
-                    "Privacy mode",
+                    "Privacy Mode",
                     if details.is_empty() {
                         "Failed to turn off"
                     } else {
@@ -1678,9 +1722,9 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             back_notification::PrivacyModeState::PrvOffUnknown => {
                 self.handler
-                    .msgbox("custom-error", "Privacy mode", "Turned off", "");
+                    .msgbox("custom-error", "Privacy Mode", "Turned off", "");
                 // log::error!("Privacy mode is turned off with unknown reason");
-                self.update_privacy_mode(false);
+                self.update_privacy_mode(impl_key, false);
             }
             _ => {}
         }

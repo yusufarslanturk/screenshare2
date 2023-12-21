@@ -8,8 +8,26 @@ use hbb_common::platform::register_breakdown_handler;
 
 use std::fs::write;
 use hbb_common::{config::{Config},};
-//use std::fs;
-//use std::io::Read;
+
+#[macro_export]
+macro_rules! my_println{
+    ($($arg:tt)*) => {
+        #[cfg(not(windows))]
+        println!("{}", format_args!($($arg)*));
+        #[cfg(windows)]
+        crate::platform::message_box(
+            &format!("{}", format_args!($($arg)*))
+        );
+    };
+}
+
+#[inline]
+fn is_empty_uni_link(arg: &str) -> bool {
+    if !arg.starts_with("hoptodesk://") {
+        return false;
+    }
+    arg["hoptodesk://".len()..].chars().all(|c| c == '/')
+}
 
 /// shared by flutter and sciter main function
 ///
@@ -24,15 +42,23 @@ pub fn core_main() -> Option<Vec<String>> {
     let mut _is_elevate = false;
     let mut _is_run_as_system = false;
     let mut _is_quick_support = false;
-    let mut _is_flutter_connect = false;
+    let mut _is_flutter_invoke_new_connection = false;
     let mut arg_exe = Default::default();
     for arg in std::env::args() {
         if i == 0 {
             arg_exe = arg;
         } else if i > 0 {
             #[cfg(feature = "flutter")]
-            if arg == "--connect" || arg == "--play" {
-                _is_flutter_connect = true;
+            if [
+                "--connect",
+                "--play",
+                "--file-transfer",
+                "--port-forward",
+                "--rdp",
+            ]
+            .contains(&arg.as_str())
+            {
+                _is_flutter_invoke_new_connection = true;
             }
             if arg == "--elevate" {
                 _is_elevate = true;
@@ -60,7 +86,7 @@ pub fn core_main() -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     #[cfg(feature = "flutter")]
     {
-        let (k, v) = ("LIBGL_ALWAYS_SOFTWARE", "true");
+        let (k, v) = ("LIBGL_ALWAYS_SOFTWARE", "1");
         if !hbb_common::config::Config::get_option("allow-always-software-render").is_empty() {
             std::env::set_var(k, v);
         } else {
@@ -68,7 +94,7 @@ pub fn core_main() -> Option<Vec<String>> {
         }
     }
     #[cfg(feature = "flutter")]
-    if _is_flutter_connect {
+    if _is_flutter_invoke_new_connection {
         return core_main_invoke_new_connection(std::env::args());
     }
     let click_setup = cfg!(windows) && args.is_empty() && crate::common::is_setup(&arg_exe);
@@ -118,9 +144,8 @@ pub fn core_main() -> Option<Vec<String>> {
     #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     init_plugins(&args);
-    if args.is_empty() {
-        #[cfg(windows)]
-        clipboard::ContextSend::enable(true);
+    log::info!("main start args:{:?}", args);
+    if args.is_empty() || is_empty_uni_link(&args[0]) {
         std::thread::spawn(move || crate::start_server(false));
     } else {
         #[cfg(windows)]
@@ -235,14 +260,24 @@ pub fn core_main() -> Option<Vec<String>> {
         } else if args[0] == "--tray" {
             if !crate::check_process("--tray", true) {
                 crate::tray::start_tray();
+				std::process::exit(0);
             }
             return None;
+        } else if args[0] == "--install-service" {
+            log::info!("start --install-service");
+            crate::platform::install_service();
+            return None;
+        } else if args[0] == "--uninstall-service" {
+            log::info!("start --uninstall-service");
+            crate::platform::uninstall_service(false);
         } else if args[0] == "--service" {
             log::info!("start --service");
             crate::start_os_service();
             return None;
         } else if args[0] == "--server" {
             log::info!("start --server with user {}", crate::username());
+            #[cfg(all(windows, feature = "virtual_display_driver"))]
+            crate::privacy_mode::restore_reg_connectivity();
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 crate::start_server(true);

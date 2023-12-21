@@ -17,6 +17,11 @@ message YUV {
   int32 stride = 2;
 }
 
+enum Chroma {
+  I420 = 0;
+  I444 = 1;
+}
+
 message VideoFrame {
   oneof union {
     EncodedVideoFrames vp9s = 6;
@@ -515,6 +520,11 @@ message ToggleVirtualDisplay {
   bool on = 2;
 }
 
+message TogglePrivacyMode {
+  string impl_key = 1;
+  bool on = 2;
+}
+
 message PermissionInfo {
   enum Permission {
     Keyboard = 0;
@@ -544,6 +554,7 @@ message SupportedDecoding {
     H264 = 2;
     H265 = 3;
     VP8 = 4;
+    AV1 = 5;
   }
 
   int32 ability_vp9 = 1;
@@ -553,6 +564,7 @@ message SupportedDecoding {
   int32 ability_vp8 = 5;
   int32 ability_av1 = 6;
   CodecAbility i444 = 7;
+  Chroma prefer_chroma = 8;
 }
 
 message OptionMessage {
@@ -651,6 +663,8 @@ message BackNotification {
   }
   // Supplementary message, for "PrvOnFailed" and "PrvOffFailed"
   string details = 3;
+  // The key of the implementation
+  string impl_key = 4;
 }
 
 message ElevationRequestWithLogon {
@@ -703,6 +717,7 @@ message Misc {
     CaptureDisplays capture_displays = 30;
     int32 refresh_video_display = 31;
     ToggleVirtualDisplay toggle_virtual_display = 32;
+    TogglePrivacyMode toggle_privacy_mode = 33;
   }
 }
 

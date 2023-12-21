@@ -54,9 +54,15 @@ impl Interface for Session {
             }
             "re-input-password" => {
                 log::error!("{}: {}", title, text);
-                let password = rpassword::prompt_password("Enter password: ").unwrap();
-                let login_data = Data::Login((password, true));
-                self.sender.send(login_data).ok();
+                match rpassword::prompt_password("Enter password: ") {
+                    Ok(password) => {
+                        let login_data = Data::Login((password, true));
+                        self.sender.send(login_data).ok();
+                    }
+                    Err(e) => {
+                        log::error!("reinput password failed, {:?}", e);
+                    }
+                }
             }
             msg if msg.contains("error") => {
                 log::error!("{}: {}: {}", msgtype, title, text);

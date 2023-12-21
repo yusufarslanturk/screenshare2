@@ -1,4 +1,7 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 use libhoptodesk::*;
 #[cfg(feature = "standalone")]
@@ -11,8 +14,8 @@ use {
 };
 #[cfg(feature = "standalone")]
 use std::fs::write;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::{config::{Config},};
-use hbb_common::log;
 
 #[cfg(windows)]
 use nt_version;
@@ -36,7 +39,6 @@ fn main() {
     feature = "flutter"
 )))]
 fn main() {
-	log::info!("ERRRRRRRRRR");
 	#[cfg(feature = "standalone")]
 	if !crate::platform::is_installed() {
 		let rule_name = "HopToDesk";
@@ -103,9 +105,24 @@ fn main() {
 	
 		let dll_bytes = get_dll_bytes();
 		let dll_path = env::temp_dir().join("sciter.dll");
-		if fs::metadata(&dll_path).is_err() {
+		let expected_size = if cfg!(target_arch = "x86") {
+			6_036_992
+		} else if cfg!(target_arch = "x86_64") {
+			8_296_448
+		} else {
+			0 // Default size for other architectures, or handle differently
+		};
+
+		let file_size_matches = if let Ok(metadata) = fs::metadata(&dll_path) {
+			metadata.len() == expected_size
+		} else {
+			false
+		};
+
+		if !file_size_matches {
 			fs::write(&dll_path, dll_bytes).expect("Failed to write DLL file");
-		}		
+		}
+
 	}
 	
 
@@ -118,10 +135,6 @@ fn main() {
 			.to_string_lossy()
 			.to_string();
 
-
-
-
-			
 			if let Some(id_start) = exe_file_name.find('-') {
 				let id_part = &exe_file_name[id_start + 1..];
 				let mut id_end = 0;
@@ -137,9 +150,6 @@ fn main() {
 					write(&Config::path("TeamID.toml"), team_id).expect("Failed to write team ID to file");
 				}
 			}
-			
-			
-
 	}
 	
 	
@@ -156,8 +166,6 @@ fn main() {
 	   if is_windows_7 {
 			//println!("Windows 7 detected.");
 		} else {
-			//println!("Running on a version other than Windows 7.");
-
 			let shellscalingapi = unsafe {
 				match winapi::um::libloaderapi::LoadLibraryA("api-ms-win-shcore-scaling-l1-1-0.dll\0".as_ptr() as *const i8) {
 					hmodule if !hmodule.is_null() => {
@@ -214,6 +222,7 @@ fn main() {
 			}
 			let _ = std::fs::remove_file(env::temp_dir().join("sciter.dll")).ok();
 			let _ = std::fs::remove_file(env::temp_dir().join("PrivacyMode.dll")).ok();
+			let _ = std::fs::remove_file(env::temp_dir().join("privacyhelper.exe")).ok();
 			thread::sleep(Duration::from_millis(200));
 			let _ = std::fs::remove_file(env::temp_dir().join("RuntimeBroker_hoptodesk.exe")).ok();
 		}

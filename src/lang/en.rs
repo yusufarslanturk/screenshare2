@@ -40,7 +40,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Insert Lock", "Insert lock"),
         ("Set Password", "Set password"),
         ("OS Password", "OS password"),
-        ("install_tip", "For best performance, complete a full install."),
         ("config_acc", "In order to control your Desktop remotely, you need to grant HopToDesk \"Accessibility\" permissions."),
         ("config_screen", "In order to access your Desktop remotely, you need to grant HopToDesk \"Screen Recording\" permissions."),
         ("Installation Path", "Installation path"),
