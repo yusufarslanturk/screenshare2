@@ -6,6 +6,9 @@ use hbb_common::log;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::platform::register_breakdown_handler;
 
+#[cfg(feature = "standalone")]
+use std::fs;
+	
 use std::fs::write;
 use hbb_common::{config::{Config},};
 
@@ -218,9 +221,16 @@ pub fn core_main() -> Option<Vec<String>> {
 						new_args.push(password.to_owned());
 						
 					}
-					/*if let Some(teamid) = parts.next() {
-						write(&Config::path("TeamID.toml"), teamid).expect("Failed to write teamid to file");
-					}*/
+
+
+					let config_path = Config::path("TeamID.toml");
+
+					if let Some(parent_dir) = config_path.parent() {
+						if !parent_dir.exists() {
+							fs::create_dir_all(parent_dir)
+								.expect("Failed to create directory for TeamID.toml");
+						}
+					}
 					if let Some(teamid) = parts.next() {
 						if teamid.len() == 16 {
 							write(&Config::path("TeamID.toml"), teamid).expect("Failed to write TeamID to file");

@@ -12,7 +12,7 @@ use hbb_common::message_proto::*;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use rdev::KeyCode;
 use rdev::{Event, EventType, Key};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::HashMap,
@@ -28,14 +28,9 @@ const OS_LOWER_WINDOWS: &str = "windows";
 const OS_LOWER_LINUX: &str = "linux";
 #[allow(dead_code)]
 const OS_LOWER_MACOS: &str = "macos";
-#[allow(dead_code)]
-const OS_LOWER_ANDROID: &str = "android";
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 static KEYBOARD_HOOKED: AtomicBool = AtomicBool::new(false);
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-static IS_RDEV_ENABLED: AtomicBool = AtomicBool::new(false);
 
 lazy_static::lazy_static! {
     static ref TO_RELEASE: Arc<Mutex<HashMap<Key, Event>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -70,9 +65,6 @@ pub mod client {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn change_grab_status(state: GrabState, keyboard_mode: &str) {
-        if !IS_RDEV_ENABLED.load(Ordering::SeqCst) {
-            return;
-        }
         match state {
             GrabState::Ready => {}
             GrabState::Run => {
@@ -96,7 +88,10 @@ pub mod client {
                 #[cfg(target_os = "linux")]
                 rdev::disable_grab();
             }
-            GrabState::Exit => {}
+            GrabState::Exit => {
+                #[cfg(target_os = "linux")]
+                rdev::exit_grab_listen();
+            }
         }
     }
 
@@ -233,7 +228,6 @@ static mut IS_0X021D_DOWN: bool = false;
 #[cfg(target_os = "macos")]
 static mut IS_LEFT_OPTION_DOWN: bool = false;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn get_keyboard_mode() -> String {
     #[cfg(not(any(feature = "flutter", feature = "cli")))]
     if let Some(session) = CUR_SESSION.lock().unwrap().as_ref() {
@@ -250,7 +244,7 @@ fn get_keyboard_mode() -> String {
     "legacy".to_string()
 }
 
-fn start_grab_loop() {
+pub fn start_grab_loop() {
     std::env::set_var("KEYBOARD_ONLY", "y");
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     std::thread::spawn(move || {
@@ -322,7 +316,7 @@ fn start_grab_loop() {
     if let Err(err) = rdev::start_grab_listen(move |event: Event| match event.event_type {
         EventType::KeyPress(key) | EventType::KeyRelease(key) => {
             if let Key::Unknown(keycode) = key {
-                log::error!("rdev get unknown key, keycode is {:?}", keycode);
+                log::error!("rdev get unknown key, keycode is : {:?}", keycode);
             } else {
                 client::process_event(&get_keyboard_mode(), &event, None);
             }
@@ -332,16 +326,6 @@ fn start_grab_loop() {
     }) {
         log::error!("Failed to init rdev grab thread: {:?}", err);
     };
-}
-
-// #[allow(dead_code)] is ok here. No need to stop grabbing loop.
-#[allow(dead_code)]
-fn stop_grab_loop() -> Result<(), rdev::GrabError> {
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    rdev::exit_grab()?;
-    #[cfg(target_os = "linux")]
-    rdev::exit_grab_listen();
-    Ok(())
 }
 
 pub fn is_long_press(event: &Event) -> bool {
@@ -891,14 +875,12 @@ pub fn map_keyboard_mode(_peer: &str, event: &Event, mut key_event: KeyEvent) ->
                 rdev::win_scancode_to_macos_code(event.position_code)?
             }
         }
-        OS_LOWER_ANDROID => rdev::win_scancode_to_android_key_code(event.position_code)?,
         _ => rdev::win_scancode_to_linux_code(event.position_code)?,
     };
     #[cfg(target_os = "macos")]
     let keycode = match _peer {
         OS_LOWER_WINDOWS => rdev::macos_code_to_win_scancode(event.platform_code as _)?,
         OS_LOWER_MACOS => event.platform_code as _,
-        OS_LOWER_ANDROID => rdev::macos_code_to_android_key_code(event.platform_code as _)?,
         _ => rdev::macos_code_to_linux_code(event.platform_code as _)?,
     };
     #[cfg(target_os = "linux")]
@@ -911,7 +893,6 @@ pub fn map_keyboard_mode(_peer: &str, event: &Event, mut key_event: KeyEvent) ->
                 rdev::linux_code_to_macos_code(event.position_code as _)?
             }
         }
-        OS_LOWER_ANDROID => rdev::linux_code_to_android_key_code(event.position_code as _)?,
         _ => event.position_code as _,
     };
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -921,7 +902,7 @@ pub fn map_keyboard_mode(_peer: &str, event: &Event, mut key_event: KeyEvent) ->
     Some(key_event)
 }
 
-#[cfg(not(any(target_os = "ios")))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn try_fill_unicode(_peer: &str, event: &Event, key_event: &KeyEvent, events: &mut Vec<KeyEvent>) {
     match &event.unicode {
         Some(unicode_info) => {

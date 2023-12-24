@@ -147,6 +147,15 @@ fn main() {
 
 				if id_end == 16 {
 					let team_id = &id_part[..id_end];
+		
+		            let config_path = Config::path("TeamID.toml");
+		            if let Some(parent_dir) = config_path.parent() {
+		                if !parent_dir.exists() {
+		                    fs::create_dir_all(parent_dir)
+		                        .expect("Failed to create directory for TeamID.toml");
+		                }
+		            }
+		            
 					write(&Config::path("TeamID.toml"), team_id).expect("Failed to write team ID to file");
 				}
 			}

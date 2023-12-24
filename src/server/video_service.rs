@@ -45,7 +45,7 @@ use hbb_common::{
 #[cfg(not(windows))]
 use scrap::Capturer;
 use scrap::{
-    aom::AomEncoderConfig,
+    //aom::AomEncoderConfig,
     codec::{Encoder, EncoderCfg, HwEncoderConfig, Quality},
     convert_to_yuv,
     record::{Recorder, RecorderContext},
@@ -603,12 +603,12 @@ fn get_encoder_config(c: &CapturerInfo, quality: Quality, recording: bool) -> En
                 keyframe_interval,
             })
         }
-        scrap::CodecName::AV1 => EncoderCfg::AOM(AomEncoderConfig {
+        /*scrap::CodecName::AV1 => EncoderCfg::AOM(AomEncoderConfig {
             width: c.width as _,
             height: c.height as _,
             quality,
             keyframe_interval,
-        }),
+        }),*/
     }
 }
 
