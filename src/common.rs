@@ -374,19 +374,6 @@ pub fn update_clipboard(clipboard: Clipboard, old: Option<&Arc<Mutex<String>>>) 
     }
 }
 
-pub async fn send_opts_after_login(
-    config: &crate::client::LoginConfigHandler,
-    peer: &mut FramedStream,
-) {
-    if let Some(opts) = config.get_option_message_after_login() {
-        let mut misc = Misc::new();
-        misc.set_option(opts);
-        let mut msg_out = Message::new();
-        msg_out.set_misc(misc);
-        allow_err!(peer.send(&msg_out).await);
-    }
-}
-
 #[cfg(feature = "use_rubato")]
 pub fn resample_channels(
     data: &[f32],
@@ -1227,25 +1214,7 @@ pub async fn get_key(sync: bool) -> String {
     }
     key
 }
-*/
-pub fn is_peer_version_ge(v: &str) -> bool {
-    #[cfg(not(any(feature = "flutter", feature = "cli")))]
-    if let Some(session) = crate::ui::CUR_SESSION.lock().unwrap().as_ref() {
-        return session.get_peer_version() >= hbb_common::get_version_number(v);
-    }
 
-    #[cfg(feature = "flutter")]
-    if let Some(session) = crate::flutter::SESSIONS
-        .read()
-        .unwrap()
-        .get(&*crate::flutter::CUR_SESSION_ID.read().unwrap())
-    {
-        return session.get_peer_version() >= hbb_common::get_version_number(v);
-    }
-
-    false
-}
-/*
 pub fn pk_to_fingerprint(pk: Vec<u8>) -> String {
     let s: String = pk.iter().map(|u| format!("{:02x}", u)).collect();
     s.chars()
@@ -1288,7 +1257,7 @@ pub async fn get_next_nonkeyexchange_msg(
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn check_process(arg: &str, same_uid: bool) -> bool {
-    use hbb_common::sysinfo::{System};
+    use hbb_common::sysinfo::System;
     let mut sys = System::new();
     sys.refresh_processes();
     let mut path = std::env::current_exe().unwrap_or_default();

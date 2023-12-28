@@ -3183,7 +3183,7 @@ dependencies = [
 
 [[package]]
 name = "hoptodesk"
-version = "1.41.3"
+version = "1.41.4"
 dependencies = [
  "android-wakelock",
  "android_logger",

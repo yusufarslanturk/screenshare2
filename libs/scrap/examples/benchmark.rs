@@ -4,7 +4,7 @@ use hbb_common::{
     log,
 };
 use scrap::{
-    aom::{AomDecoder, AomEncoder, AomEncoderConfig},
+    //aom::{AomDecoder, AomEncoder, AomEncoderConfig},
     codec::{EncoderApi, EncoderCfg, Quality as Q},
     convert_to_yuv, Capturer, Display, TraitCapturer, VpxDecoder, VpxDecoderConfig, VpxEncoder,
     VpxEncoderConfig,
@@ -172,7 +172,7 @@ fn test_vpx(
         start.elapsed() / yuv_count as _
     );
 }
-
+/*
 fn test_av1(
     c: &mut Capturer,
     width: usize,
@@ -235,7 +235,7 @@ fn test_av1(
     }
     println!("AV1 decode: {:?}", start.elapsed() / yuv_count as _);
 }
-
+*/
 #[cfg(feature = "hwcodec")]
 mod hw {
     use hwcodec::ffmpeg::CodecInfo;

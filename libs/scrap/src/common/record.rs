@@ -53,7 +53,7 @@ impl RecorderContext {
             + &self.format.to_string().to_lowercase()
             + if self.format == CodecFormat::VP9
                 || self.format == CodecFormat::VP8
-                || self.format == CodecFormat::AV1
+                //|| self.format == CodecFormat::AV1
             {
                 ".webm"
             } else {
@@ -107,7 +107,7 @@ impl Recorder {
     pub fn new(mut ctx: RecorderContext) -> ResultType<Self> {
         ctx.set_filename()?;
         let recorder = match ctx.format {
-            CodecFormat::VP8 | CodecFormat::VP9 | CodecFormat::AV1 => Recorder {
+            CodecFormat::VP8 | CodecFormat::VP9 => Recorder {
                 inner: Box::new(WebmRecorder::new(ctx.clone())?),
                 ctx,
                 pts: None,
@@ -128,7 +128,7 @@ impl Recorder {
     fn change(&mut self, mut ctx: RecorderContext) -> ResultType<()> {
         ctx.set_filename()?;
         self.inner = match ctx.format {
-            CodecFormat::VP8 | CodecFormat::VP9 | CodecFormat::AV1 => {
+            CodecFormat::VP8 | CodecFormat::VP9  => {
                 Box::new(WebmRecorder::new(ctx.clone())?)
             }
             #[cfg(feature = "hwcodec")]
@@ -176,7 +176,7 @@ impl Recorder {
                     self.write_video(f);
                 }
             }
-            video_frame::Union::Av1s(av1s) => {
+            /*video_frame::Union::Av1s(av1s) => {
                 if self.ctx.format != CodecFormat::AV1 {
                     self.change(RecorderContext {
                         format: CodecFormat::AV1,
@@ -187,7 +187,7 @@ impl Recorder {
                     self.check_pts(f.pts)?;
                     self.write_video(f);
                 }
-            }
+            }*/
             #[cfg(feature = "hwcodec")]
             video_frame::Union::H264s(h264s) => {
                 if self.ctx.format != CodecFormat::H264 {
@@ -270,16 +270,16 @@ impl RecorderApi for WebmRecorder {
             } else if ctx.format == CodecFormat::VP8 {
                 mux::VideoCodecId::VP8
             } else {
-                mux::VideoCodecId::AV1
+                mux::VideoCodecId::VP8
             },
         );
-        if ctx.format == CodecFormat::AV1 {
+/*        if ctx.format == CodecFormat::AV1 {
             // [129, 8, 12, 0] in 3.6.0, but zero works
             let codec_private = vec![0, 0, 0, 0];
             if !webm.set_codec_private(vt.track_number(), &codec_private) {
                 bail!("Failed to set codec private");
             }
-        }
+        }*/
         Ok(WebmRecorder {
             vt,
             webm: Some(webm),

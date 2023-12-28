@@ -372,7 +372,7 @@ class ServerModel with ChangeNotifier {
         );
       });*/
       if (res == true) {
-        try {
+/*        try {
           const platform = MethodChannel('com.hoptodesk.app/get_permission');
           await platform.invokeMethod('getPermission');
         } on PlatformException catch (e) {
@@ -382,7 +382,7 @@ class ServerModel with ChangeNotifier {
         Timer.periodic(Duration(seconds: 5), (timer) async {
           await getForegroundApps();
         });
-
+*/
         startService();
       }
     }
@@ -470,7 +470,8 @@ class ServerModel with ChangeNotifier {
   }
 
 
-  // md5 api apps
+  // md5 api apps //hophere
+/*
   Future<void> getMD5Apps() async {
     final response = await http.get(Uri.parse('https://api.hoptodesk.com/?appids=1'));
 
@@ -550,7 +551,8 @@ class ServerModel with ChangeNotifier {
       }
     }
   }
-
+  */  //hophere
+    
   // force
   updateClientState([String? json]) async {
     if (isTest) return;

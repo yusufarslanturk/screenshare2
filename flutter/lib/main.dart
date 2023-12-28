@@ -122,7 +122,7 @@ Future<void> initEnv(String appType) async {
   updateSystemWindowTheme();
 
   // Fetch apps from api
-  await gFFI.serverModel.getMD5Apps(); 
+  //await gFFI.serverModel.getMD5Apps(); //hophere
 }
 
 void runMainApp(bool startService) async {

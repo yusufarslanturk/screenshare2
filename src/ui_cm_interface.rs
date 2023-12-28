@@ -23,8 +23,6 @@ use crate::ipc::{self, Data};
 use clipboard::ContextSend;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::unbounded_channel;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use hbb_common::tokio::sync::Mutex as TokioMutex;
 use hbb_common::{
     allow_err,
     config::Config,
@@ -38,8 +36,9 @@ use hbb_common::{
         sync::mpsc::{self, UnboundedSender},
         task::spawn_blocking,
     },
-    ResultType,
 };
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use hbb_common::{tokio::sync::Mutex as TokioMutex, ResultType};
 use serde_derive::Serialize;
 
 #[derive(Serialize, Clone)]
@@ -429,6 +428,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         {
             if ContextSend::is_enabled() {
+                log::debug!("Clipboard is enabled");
                 allow_err!(
                     self.stream
                         .send(&Data::ClipboardFile(clipboard::ClipboardFile::MonitorReady))
@@ -456,7 +456,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     log::debug!("conn_id: {}", id);
                                     self.cm.add_connection(id, is_file_transfer, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, restart, recording, block_input, from_switch, self.tx.clone(), security_numbers, avatar_image);
                                     self.conn_id = id;
-                                    #[cfg(windows)]
+                                    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
                                     {
                                         self.file_transfer_enabled = _file_transfer_enabled;
                                     }
@@ -810,7 +810,7 @@ async fn handle_fs(
             );
             job.total_size = total_size;
             job.conn_id = conn_id;
-            //write_jobs.push(job);
+            write_jobs.push(job);
         }
         ipc::FS::CancelWrite { id } => {
             if let Some(job) = fs::get_job(id, write_jobs) {

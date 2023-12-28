@@ -31,6 +31,7 @@ impl InvokeUiCM for SciterHandler {
                 client.file,
                 client.restart,
                 client.recording,
+                client.block_input,
                 security_numbers,
                 avatar_image
             ),

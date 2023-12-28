@@ -11,7 +11,7 @@ use crate::mediacodec::{
     MediaCodecDecoder, MediaCodecDecoders, H264_DECODER_SUPPORT, H265_DECODER_SUPPORT,
 };
 use crate::{
-    aom::{self, AomDecoder, AomEncoder, AomEncoderConfig},
+    //aom::{self, AomDecoder, AomEncoder, AomEncoderConfig},
     common::GoogleImage,
     vpxcodec::{self, VpxDecoder, VpxDecoderConfig, VpxEncoder, VpxEncoderConfig, VpxVideoCodecId},
     CodecName, EncodeYuvFormat, ImageRgb,
@@ -51,7 +51,7 @@ pub struct HwEncoderConfig {
 #[derive(Debug, Clone)]
 pub enum EncoderCfg {
     VPX(VpxEncoderConfig),
-    AOM(AomEncoderConfig),
+    //AOM(AomEncoderConfig),
     HW(HwEncoderConfig),
 }
 
@@ -90,7 +90,7 @@ impl DerefMut for Encoder {
 pub struct Decoder {
     vp8: Option<VpxDecoder>,
     vp9: Option<VpxDecoder>,
-    av1: Option<AomDecoder>,
+    //av1: Option<AomDecoder>,
     #[cfg(feature = "hwcodec")]
     hw: HwDecoders,
     #[cfg(feature = "hwcodec")]
@@ -113,9 +113,9 @@ impl Encoder {
             EncoderCfg::VPX(_) => Ok(Encoder {
                 codec: Box::new(VpxEncoder::new(config, i444)?),
             }),
-            EncoderCfg::AOM(_) => Ok(Encoder {
+            /*EncoderCfg::AOM(_) => Ok(Encoder {
                 codec: Box::new(AomEncoder::new(config, i444)?),
-            }),
+            }),*/
 
             #[cfg(feature = "hwcodec")]
             EncoderCfg::HW(_) => match HwEncoder::new(config, i444) {
@@ -154,7 +154,7 @@ impl Encoder {
         }
 
         let vp8_useable = decodings.len() > 0 && decodings.iter().all(|(_, s)| s.ability_vp8 > 0);
-        let av1_useable = decodings.len() > 0 && decodings.iter().all(|(_, s)| s.ability_av1 > 0);
+        //let av1_useable = decodings.len() > 0 && decodings.iter().all(|(_, s)| s.ability_av1 > 0);
         #[allow(unused_mut)]
         let mut h264_name = None;
         #[allow(unused_mut)]
@@ -183,7 +183,7 @@ impl Encoder {
             .filter(|(_, s)| {
                 s.prefer == PreferCodec::VP9.into()
                     || s.prefer == PreferCodec::VP8.into() && vp8_useable
-                    || s.prefer == PreferCodec::AV1.into() && av1_useable
+                    //|| s.prefer == PreferCodec::AV1.into() && av1_useable
                     || s.prefer == PreferCodec::H264.into() && h264_name.is_some()
                     || s.prefer == PreferCodec::H265.into() && h265_name.is_some()
             })
@@ -195,9 +195,9 @@ impl Encoder {
 
         #[allow(unused_mut)]
         let mut auto_codec = CodecName::VP9;
-        if av1_useable {
+        /*if av1_useable {
             auto_codec = CodecName::AV1;
-        }
+        }*/
         let mut system = System::new();
         system.refresh_memory();
         if vp8_useable && system.total_memory() <= 4 * 1024 * 1024 * 1024 {
@@ -208,7 +208,7 @@ impl Encoder {
         match preference {
             PreferCodec::VP8 => *name = CodecName::VP8,
             PreferCodec::VP9 => *name = CodecName::VP9,
-            PreferCodec::AV1 => *name = CodecName::AV1,
+            //PreferCodec::AV1 => *name = CodecName::AV1,
             PreferCodec::H264 => *name = h264_name.map_or(auto_codec, |c| CodecName::H264(c)),
             PreferCodec::H265 => *name = h265_name.map_or(auto_codec, |c| CodecName::H265(c)),
             PreferCodec::Auto => *name = auto_codec,
@@ -230,13 +230,13 @@ impl Encoder {
     pub fn supported_encoding() -> SupportedEncoding {
         #[allow(unused_mut)]
         let mut encoding = SupportedEncoding {
-            vp8: true,
-            av1: true,
-            i444: Some(CodecAbility {
+            vp8: true
+            //av1: true,
+            /*i444: Some(CodecAbility {
                 vp9: true,
                 av1: true,
                 ..Default::default()
-            })
+            })*/
             .into(),
             ..Default::default()
         };
@@ -259,7 +259,7 @@ impl Encoder {
                 VpxVideoCodecId::VP8 => false,
                 VpxVideoCodecId::VP9 => decodings.iter().all(|d| d.1.i444.vp9),
             },
-            EncoderCfg::AOM(_) => decodings.iter().all(|d| d.1.i444.av1),
+            //EncoderCfg::AOM(_) => decodings.iter().all(|d| d.1.i444.av1),
             EncoderCfg::HW(_) => false,
         };
         prefer_i444 && i444_useable && !decodings.is_empty()
@@ -318,11 +318,11 @@ impl Decoder {
             codec: VpxVideoCodecId::VP9,
         })
         .ok();
-        let av1 = AomDecoder::new().ok();
+        //let av1 = AomDecoder::new().ok();
         Decoder {
             vp8,
             vp9,
-            av1,
+            //av1,
             #[cfg(feature = "hwcodec")]
             hw: if enable_hwcodec_option() {
                 HwDecoder::new_decoders()
@@ -362,13 +362,13 @@ impl Decoder {
                     bail!("vp9 decoder not available");
                 }
             }
-            video_frame::Union::Av1s(av1s) => {
+            /*video_frame::Union::Av1s(av1s) => {
                 if let Some(av1) = &mut self.av1 {
                     Decoder::handle_av1s_video_frame(av1, av1s, rgb, chroma)
                 } else {
                     bail!("av1 decoder not available");
                 }
-            }
+            }*/
             #[cfg(feature = "hwcodec")]
             video_frame::Union::H264s(h264s) => {
                 *chroma = Some(Chroma::I420);
@@ -437,7 +437,7 @@ impl Decoder {
     }
 
     // rgb [in/out] fmt and stride must be set in ImageRgb
-    fn handle_av1s_video_frame(
+/*    fn handle_av1s_video_frame(
         decoder: &mut AomDecoder,
         av1s: &EncodedVideoFrames,
         rgb: &mut ImageRgb,
@@ -462,7 +462,7 @@ impl Decoder {
             Ok(true)
         }
     }
-
+*/
     // rgb [in/out] fmt and stride must be set in ImageRgb
     #[cfg(feature = "hwcodec")]
     fn handle_hw_video_frame(
@@ -510,8 +510,8 @@ impl Decoder {
             PreferCodec::VP8
         } else if codec == "vp9" {
             PreferCodec::VP9
-        } else if codec == "av1" {
-            PreferCodec::AV1
+        //} else if codec == "av1" {
+        //    PreferCodec::AV1
         } else if codec == "h264" {
             PreferCodec::H264
         } else if codec == "h265" {

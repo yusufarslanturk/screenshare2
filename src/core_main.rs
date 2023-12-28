@@ -6,7 +6,7 @@ use hbb_common::log;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::platform::register_breakdown_handler;
 
-#[cfg(feature = "standalone")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::fs;
 	
 use std::fs::write;
@@ -224,7 +224,8 @@ pub fn core_main() -> Option<Vec<String>> {
 
 
 					let config_path = Config::path("TeamID.toml");
-
+					
+					#[cfg(any(target_os = "windows", target_os = "macos"))]
 					if let Some(parent_dir) = config_path.parent() {
 						if !parent_dir.exists() {
 							fs::create_dir_all(parent_dir)

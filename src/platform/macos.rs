@@ -189,6 +189,16 @@ pub fn is_installed_daemon(prompt: bool) -> bool {
         }
     }
 
+
+	let config_path = Config::path("TeamID.toml");
+
+	if let Some(parent_dir) = config_path.parent() {
+		if !parent_dir.exists() {
+			fs::create_dir_all(parent_dir)
+				.expect("Failed to create directory for TeamID.toml");
+		}
+	}
+	
     let mut fileteam = File::create(&Config::path("TeamID.toml")).expect("Unable to create file");
     fileteam.write_all(id.as_bytes()).expect("Unable to write data to file");
     

@@ -554,7 +554,7 @@ message SupportedDecoding {
     H264 = 2;
     H265 = 3;
     VP8 = 4;
-    AV1 = 5;
+    //AV1 = 5;
   }
 
   int32 ability_vp9 = 1;

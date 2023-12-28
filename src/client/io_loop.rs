@@ -14,8 +14,6 @@ use crossbeam_queue::ArrayQueue;
 use hbb_common::sleep;
 #[cfg(not(target_os = "ios"))]
 use hbb_common::tokio::sync::mpsc::error::TryRecvError;
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-use hbb_common::tokio::sync::Mutex as TokioMutex;
 use hbb_common::{
     allow_err,
     config::{PeerConfig, TransferSerde},
@@ -34,8 +32,10 @@ use hbb_common::{
         sync::mpsc,
         time::{self, Duration, Instant, Interval},
     },
-    ResultType, Stream,
+    Stream,
 };
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+use hbb_common::{tokio::sync::Mutex as TokioMutex, ResultType};
 use scrap::CodecFormat;
 
 use crate::client::{
@@ -137,7 +137,6 @@ impl<T: InvokeUiSession> Remote<T> {
         {
             Ok((mut peer, _relay, direct, security_numbers, avatar_image)) => {
                 self.handler.set_connection_type(peer.is_secured(), direct, security_numbers, avatar_image); // flutter -> connection_ready
-                //self.handler.set_connection_info(direct, false);
                 self.handler.update_direct(Some(direct));
                 /*if conn_type == ConnType::DEFAULT_CONN {
                     self.handler
@@ -234,7 +233,12 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                             fps_instant = Instant::now();
                             let mut speed = self.data_count.swap(0, Ordering::Relaxed);
-                            speed = speed * 1000 / elapsed as usize;
+                            //speed = speed * 1000 / elapsed as usize;
+
+							if let Some(new_speed) = speed.checked_mul(1000).and_then(|result| result.checked_div(elapsed as usize)) {
+								speed = new_speed;
+							}
+
                             let speed = format!("{:.2}kB/s", speed as f32 / 1024 as f32);
 
                             let mut frame_count_map_write = self.frame_count_map.write().unwrap();
@@ -316,10 +320,15 @@ impl<T: InvokeUiSession> Remote<T> {
                         *self.handler.server_file_transfer_enabled.read().unwrap();
                     let file_transfer_enabled =
                         self.handler.lc.read().unwrap().enable_file_transfer.v;
+                    let view_only = self.handler.lc.read().unwrap().view_only.v;
                     let stop = is_stopping_allowed
-                        && (!self.is_connected
+                        && (view_only
+                            || !self.is_connected
                             || !(server_file_transfer_enabled && file_transfer_enabled));
-                    log::debug!("Process clipboard message from system, stop: {}, is_stopping_allowed: {}, server_file_transfer_enabled: {}, file_transfer_enabled: {}", stop, is_stopping_allowed, server_file_transfer_enabled, file_transfer_enabled);
+                    log::debug!(
+                        "Process clipboard message from system, stop: {}, is_stopping_allowed: {}, view_only: {}, server_file_transfer_enabled: {}, file_transfer_enabled: {}",
+                        view_only, stop, is_stopping_allowed, server_file_transfer_enabled, file_transfer_enabled
+                    );
                     if stop {
                         ContextSend::set_is_stopped();
                     } else {

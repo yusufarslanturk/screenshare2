@@ -1,15 +1,9 @@
 use std::{
     collections::HashMap,
-    net::{SocketAddr},
+    net::SocketAddr,
     ops::Deref,
     str::FromStr,
-    sync::{
-        //atomic::{AtomicUsize, Ordering},
-        mpsc,
-        Arc,
-        Mutex,
-        RwLock,
-    },
+    sync::{mpsc, Arc, Mutex, RwLock},
     time::UNIX_EPOCH,
 };
 
@@ -52,8 +46,7 @@ use hbb_common::{
     tokio::time::Duration,
     tokio::{self, net::TcpStream},
     //AddrMangle,
-    ResultType,
-    Stream,
+    ResultType, Stream,
 };
 pub use helper::*;
 use scrap::{
@@ -310,6 +303,8 @@ impl Peer {
 impl Client {
     pub async fn start(
         peer: &str,
+        //key: &str,
+        //token: &str,
         conn_type: ConnType,
     ) -> ResultType<(
         Stream,
@@ -336,8 +331,8 @@ impl Client {
     /// Start a new connection.
     async fn _start(
         peer_id: &str,
-        //        key: &str,
-        //        token: &str,
+        //key: &str,
+        //token: &str,
         conn_type: ConnType,
     ) -> ResultType<(
         Stream,
@@ -661,11 +656,7 @@ impl Client {
                                         &out_sk_b,
                                         &their_pk_b,
                                     );
-                                log::info!(
-                                    "Connection is secured: {}, and Security Code is: {}",
-                                    conn.is_secured(),
-                                    security_numbers
-                                );
+                                log::info!("Connection is secured: {}, and Security Code is: {}", conn.is_secured(), security_numbers);
                             } else {
                                 log::error!("Handshake failed: sign failure");
                                 conn.send(&Message::new()).await?;
@@ -1435,10 +1426,14 @@ impl LoginConfigHandler {
                 option.disable_keyboard = f(true);
                 option.disable_clipboard = f(true);
                 option.show_remote_cursor = f(true);
+                option.enable_file_transfer = f(false);
+                option.lock_after_session_end = f(false);
             } else {
                 option.disable_keyboard = f(false);
                 option.disable_clipboard = f(self.get_toggle_option("disable-clipboard"));
                 option.show_remote_cursor = f(self.get_toggle_option("show-remote-cursor"));
+                option.enable_file_transfer = f(self.config.enable_file_transfer.v);
+                option.lock_after_session_end = f(self.config.lock_after_session_end.v);
             }
         } else {
             let is_set = self
@@ -1528,7 +1523,7 @@ impl LoginConfigHandler {
             msg.show_remote_cursor = BoolOption::Yes.into();
             n += 1;
         }
-        if self.get_toggle_option("lock-after-session-end") {
+        if !view_only && self.get_toggle_option("lock-after-session-end") {
             msg.lock_after_session_end = BoolOption::Yes.into();
             n += 1;
         }
@@ -1536,7 +1531,7 @@ impl LoginConfigHandler {
             msg.disable_audio = BoolOption::Yes.into();
             n += 1;
         }
-        if self.get_toggle_option("enable-file-transfer") {
+        if !view_only && self.get_toggle_option("enable-file-transfer") {
             msg.enable_file_transfer = BoolOption::Yes.into();
             n += 1;
         }
@@ -1834,7 +1829,11 @@ impl LoginConfigHandler {
             }
         }
         if config.keyboard_mode.is_empty() {
-            if is_keyboard_mode_supported(&KeyboardMode::Map, get_version_number(&pi.version), &pi.platform) {
+            if is_keyboard_mode_supported(
+                &KeyboardMode::Map,
+                get_version_number(&pi.version),
+                &pi.platform,
+            ) {
                 config.keyboard_mode = KeyboardMode::Map.to_string();
             } else {
                 config.keyboard_mode = KeyboardMode::Legacy.to_string();
@@ -2026,6 +2025,8 @@ where
     let mut last_chroma = None;
 
     std::thread::spawn(move || {
+        //#[cfg(windows)]
+        //sync_cpu_usage();
         let mut handler_controller_map = Vec::new();
         // let mut count = Vec::new();
         // let mut duration = std::time::Duration::ZERO;
@@ -2668,11 +2669,9 @@ pub trait Interface: Send + Clone + 'static + Sized {
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);
     fn handle_login_error(&self, err: &str) -> bool;
     fn handle_peer_info(&self, pi: PeerInfo);
-    //fn set_force_relay(&mut self, direct: bool, received: bool);
     fn on_error(&self, err: &str) {
         self.msgbox("error", "Error", err, "");
     }
-    //fn is_force_relay(&self) -> bool;
     async fn handle_hash(&self, pass: &str, hash: Hash, peer: &mut Stream);
     async fn handle_login_from_ui(
         &self,
