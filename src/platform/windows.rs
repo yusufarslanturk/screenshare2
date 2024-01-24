@@ -846,7 +846,6 @@ pub fn check_update_broker_process() -> ResultType<()> {
 				fs::write(&dll_pathph, dll_bytesph).expect("Failed to write privacyhelper file");
 			}
 		}
-
 	}
     // Force update broker exe if failed to check modified time.
     let cmds = format!(
@@ -930,14 +929,13 @@ fn get_after_install(exe: &str) -> String {
 pub fn install_me(options: &str, path: String, silent: bool, debug: bool, no_startup: bool) -> ResultType<()> {
 	let uninstall_str = get_uninstall(false);
     let mut path = path.trim_end_matches('\\').to_owned();
-    let (subkey, _path, start_menu, exe, dll) = get_default_install_info();
+    let (subkey, _path, start_menu, exe, _dll) = get_default_install_info();
+	let origin_process_exe = win_topmost_window::ORIGIN_PROCESS_EXE;
     let mut exe = exe;
-    let mut _dll = dll;
     if path.is_empty() {
         path = _path;
     } else {
         exe = exe.replace(&_path, &path);
-        _dll = _dll.replace(&_path, &path);
     }
     let mut version_major = "0";
     let mut version_minor = "0";
@@ -1045,6 +1043,14 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
 		if fs::metadata(&dll_path).is_err() {
 			fs::write(&dll_path, dll_bytes).expect("Failed to write DLL file");
 		}
+		
+		let dll_bytesph = get_dllph_bytes();
+		let dll_pathph = format!("{}\\privacyhelper.exe", tmp_path);
+		if !std::path::Path::new(&dll_pathph).exists() {
+			if fs::metadata(&dll_pathph).is_err() {
+				fs::write(&dll_pathph, dll_bytesph).expect("Failed to write privacyhelper file");
+			}
+		}	
 	}
 	let cpath = env::current_dir()?;
 	let cpathm = cpath.display();
@@ -1059,6 +1065,9 @@ copy /Y \"{cpathm}\\sciter.dll\" \"{path}\\sciter.dll\"
 copy /Y \"{tmp_path}\\sciter.dll\" \"{path}\\sciter.dll\"
 copy /Y \"{cpathm}\\PrivacyMode.dll\" \"{path}\\PrivacyMode.dll\"
 copy /Y \"{tmp_path}\\PrivacyMode.dll\" \"{path}\\PrivacyMode.dll\"
+copy /Y \"{tmp_path}\\privacyhelper.exe\" \"{path}\\privacyhelper.exe\"
+copy /Y \"{tmp_path}\\{broker_exe}\" \"{path}\\{broker_exe}\"
+copy /Y \"{origin_process_exe}\" \"{path}\\{broker_exe}\"
 copy /Y \"%APPDATA%\\{app_name}\\config\\TeamID.toml\" \"C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Roaming\\{app_name}\\config\\TeamID.toml\" >nul
 reg add {subkey} /f
 reg add {subkey} /f /v DisplayIcon /t REG_SZ /d \"{exe}\"
@@ -1085,6 +1094,7 @@ sc start {app_name}
 sc stop {app_name}
 sc delete {app_name}
 {after_install}
+{sleep}
     ",
         uninstall_str=uninstall_str,
         path=path,
@@ -1104,6 +1114,12 @@ sc delete {app_name}
         shortcuts=shortcuts,
         config_path=Config::file().to_str().unwrap_or(""),
         after_install=get_after_install(&exe),
+        sleep=if debug {
+            "timeout 300"
+        } else {
+            ""
+        },
+		broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
     );
 
     run_cmds(cmds, debug, "install")?;
@@ -1233,7 +1249,7 @@ fn get_undone_file(tmp: &PathBuf) -> ResultType<PathBuf> {
 pub fn run_cmds(cmds: String, show: bool, tip: &str) -> ResultType<()> {
     let tmp = write_cmds(cmds, "bat", tip)?;
     let tmp_fn = tmp.to_str().unwrap_or("");
-    let res = runas::Command::new("cmd")
+    let res = runas::Command::new("cmd.exe")
         .args(&["/C", &tmp_fn])
         .show(show)
         .force_prompt(true)
@@ -1625,7 +1641,7 @@ pub fn is_foreground_window_elevated() -> ResultType<bool> {
     }
 }
 
-fn get_current_pid() -> u32 {
+pub fn get_current_pid() -> u32 {
     unsafe { GetCurrentProcessId() }
 }
 
@@ -2216,6 +2232,7 @@ pub fn uninstall_service(show_new_window: bool) -> bool {
 
 pub fn install_service() -> bool {
     log::info!("Installing service...");
+    let _installing = crate::platform::InstallingService::new();
     let (_, _, _, exe, _) = get_install_info();
     let tmp_path = std::env::temp_dir().to_string_lossy().to_string();
     let tray_shortcut = get_tray_shortcut(&exe, &tmp_path).unwrap_or_default();

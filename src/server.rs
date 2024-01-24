@@ -1,5 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::two_factor_auth::sockets::AuthAnswer;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -98,7 +96,7 @@ pub fn new() -> ServerPtr {
         id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(not(target_os = "ios"))]
     server.add_service(Box::new(display_service::new()));
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -462,7 +460,12 @@ pub async fn start_server(is_server: bool) {
         log::info!("XAUTHORITY={:?}", std::env::var("XAUTHORITY"));
     }
     #[cfg(feature = "hwcodec")]
-    scrap::hwcodec::check_config_process();
+    scrap::hwcodec::hwcodec_new_check_process();
+    #[cfg(feature = "gpucodec")]
+    scrap::gpucodec::gpucodec_new_check_process();
+    #[cfg(windows)]
+    hbb_common::platform::windows::start_cpu_performance_monitor();
+
     if is_server {
         crate::common::set_server_running(true);
         std::thread::spawn(move || {

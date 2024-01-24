@@ -24,7 +24,7 @@ fn get_display(i: usize) -> Display {
 fn record(i: usize) {
     use std::time::Duration;
 
-    use scrap::TraitFrame;
+    use scrap::{Frame, TraitPixelBuffer};
 
     for d in Display::all().unwrap() {
         println!("{:?} {} {}", d.origin(), d.width(), d.height());
@@ -37,15 +37,18 @@ fn record(i: usize) {
         let mut capture_mag = CapturerMag::new(display.origin(), display.width(), display.height())
             .expect("Couldn't begin capture.");
         let wnd_cls = "";
-        let wnd_name = "RustDeskPrivacyWindow";
+        let wnd_name = "HopToDeskPrivacyWindow";
         if false == capture_mag.exclude(wnd_cls, wnd_name).unwrap() {
             println!("No window found for cls {} name {}", wnd_cls, wnd_name);
         } else {
             println!("Filter window for cls {} name {}", wnd_cls, wnd_name);
         }
 
-        let captured_frame = capture_mag.frame(Duration::from_millis(0)).unwrap();
-        let frame = captured_frame.data();
+        let frame = capture_mag.frame(Duration::from_millis(0)).unwrap();
+        let Frame::PixelBuffer(frame) = frame else {
+            return;
+        };
+        let frame = frame.data();
         println!("Capture data len: {}, Saving...", frame.len());
 
         let mut bitflipped = Vec::with_capacity(w * h * 4);
@@ -73,7 +76,7 @@ fn record(i: usize) {
         let mut capture_mag = CapturerMag::new(display.origin(), display.width(), display.height())
             .expect("Couldn't begin capture.");
         let wnd_cls = "";
-        let wnd_title = "RustDeskPrivacyWindow";
+        let wnd_title = "HopToDeskPrivacyWindow";
         if false == capture_mag.exclude(wnd_cls, wnd_title).unwrap() {
             println!("No window found for cls {} title {}", wnd_cls, wnd_title);
         } else {
@@ -81,6 +84,9 @@ fn record(i: usize) {
         }
 
         let frame = capture_mag.frame(Duration::from_millis(0)).unwrap();
+        let Frame::PixelBuffer(frame) = frame else {
+            return;
+        };
         println!("Capture data len: {}, Saving...", frame.data().len());
 
         let mut raw = Vec::new();

@@ -1,6 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::two_factor_auth::sockets::{AuthAnswer};
-
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 use std::iter::FromIterator;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -101,8 +98,6 @@ pub trait InvokeUiCM: Send + Clone + 'static + Sized {
 
     fn change_language(&self);
 	
-	#[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn update_2fa_answer(&self, answer: AuthAnswer);
     fn show_elevation(&self, show: bool);    
     
     fn update_voice_call_state(&self, client: &Client);
@@ -449,9 +444,6 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                         }
                         Ok(Some(data)) => {
                             match data {
-								Data::TFA { id, answer } => {
-									self.cm.update_2fa_answer(answer);
-								}
                                 Data::Login{id, is_file_transfer, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, file_transfer_enabled: _file_transfer_enabled, restart, recording, block_input, from_switch, security_numbers, avatar_image} => {
                                     log::debug!("conn_id: {}", id);
                                     self.cm.add_connection(id, is_file_transfer, port_forward, peer_id, name, authorized, keyboard, clipboard, audio, file, restart, recording, block_input, from_switch, self.tx.clone(), security_numbers, avatar_image);

@@ -307,8 +307,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("The peer has exited from Privacy Mode.", "Rekan keluar"),
         ("Failed to turn off", "Gagal mematikan"),
         ("Turned off", "Dimatikan"),
-        ("In privacy mode", "Dalam mode privasi"),
-        ("Out privacy mode", "Keluar dari mode privasi"),
         ("Language", "Bahasa"),
         ("Keep HopToDesk background service", "Pertahankan HopToDesk berjalan pada background service"),
         ("Ignore Battery Optimizations", "Abaikan Pengoptimalan Baterai"),
@@ -586,9 +584,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Change view", "Sesuaikan tampilan"),
         ("Enable Wake On LAN", "Aktifkan Wake On LAN"),
 		("Enable 2FA", "Aktifkan 2FA"),
-        ("Enable 2FA Auto Accept", "Aktifkan Terima Otomatis 2FA"),		
-		("2FA QR code", "Kode QR 2FA"),		
-        ("Scan this QR code with a camera on a secondary device such as a phone to set it up as your 2FA authenticator.", "Pindai kode QR ini dengan kamera pada perangkat sekunder seperti telepon untuk mengaturnya sebagai autentikator 2FA Anda."),
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Anda perlu mengonfirmasi 2FA pada perangkat sekunder dengan Anda saat mencoba menyambung ke desktop ini."),		
 		("Unattended Access", "Akses Tanpa Pengawasan"),						
     ].iter().cloned().collect();

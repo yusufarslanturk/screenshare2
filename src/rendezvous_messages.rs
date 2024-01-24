@@ -45,7 +45,7 @@ impl<'a> Listening<'a> {
         pk: Vec<u8>,
         nat_type: i32,
     ) -> Self {
-        let lan_ipv4 = match socket_client::get_lan_ipv4() {
+		let lan_ipv4 = match socket_client::get_lan_ipv4() {
             Ok(ipv4) => Some(SocketAddr::new(ipv4, addr.port())),
             Err(_) => None,
         };

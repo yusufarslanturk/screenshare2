@@ -32,8 +32,8 @@ pub struct TurnConfig {
 
 async fn get_turn_servers() -> Option<Vec<TurnConfig>> {
     let mut root_cert_store = rustls::RootCertStore::empty();
-    //root_cert_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
-	root_cert_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+    root_cert_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+	//root_cert_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
         OwnedTrustAnchor::from_subject_spki_name_constraints(
             ta.subject,
             ta.spki,
@@ -186,8 +186,13 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
     {
         let mut cached = PUBLIC_IP.lock().unwrap();
         if let Some((cached_local_ip, public_ip, cached_at)) = *cached {
+
+
             //  Time since cached is in 10 minutes.
             if cached_at.elapsed() < Duration::from_secs(600) {
+				//use hbb_common::{log};
+				//log::info!("get_public_ip {:?}, {:?}", public_ip, cached_at.elapsed());
+
                 let local_ip = socket_client::get_lan_ipv4().ok()?;
                 // The network environment shouldn't be changed,
                 // as the local ip haven't changed.
@@ -206,7 +211,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
         let tx = tx.clone();
         tokio::spawn(async move {
             //log::info!("start retrieve public ip via: {}", config.addr);
-            let turn_addr = config.addr.clone();
+            //let turn_addr = config.addr.clone();
             if let Ok(turn_client) = TurnClient::new(config).await {
                 if let Ok(addr) = turn_client.get_public_ip().await {
                     //tx.send(Some(addr)).await;
@@ -215,7 +220,7 @@ pub async fn get_public_ip() -> Option<SocketAddr> {
                         Err(_) => {}
                     }
 
-                    log::info!("Got public ip via {}", turn_addr);
+                    //log::info!("Got public ip via {}", turn_addr);
                     return;
                 }
             }

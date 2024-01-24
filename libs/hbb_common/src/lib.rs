@@ -286,12 +286,10 @@ pub fn get_uuid() -> Vec<u8> {
 				use winreg::RegKey;
 				let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 				let subkey = r#"SOFTWARE\Microsoft\Cryptography"#;
-
 				let cryptography = match hklm.open_subkey_with_flags(subkey, KEY_READ | KEY_WOW64_64KEY) {		    	
 					Ok(key) => key,
 					Err(_) => return Config::get_key_pair().1,
 				};
-
 				let machine_guid: String = match cryptography.get_value("MachineGuid") {
 					Ok(val) => val,
 					Err(_) => return Config::get_key_pair().1,
@@ -366,6 +364,10 @@ pub fn init_log(_is_async: bool, _name: &str) -> Option<flexi_logger::LoggerHand
         // though async logger more efficient, but it also causes more problems, disable it for now
         let mut logger_holder: Option<flexi_logger::LoggerHandle> = None;
         let mut path = config::Config::log_path();
+        #[cfg(target_os = "android")]
+        if !config::Config::get_home().exists() {
+            return None;
+        }
         if !_name.is_empty() {
             path.push(_name);
         }

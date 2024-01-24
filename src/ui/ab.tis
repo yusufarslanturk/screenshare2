@@ -223,7 +223,7 @@ function getSessionsStyleOption(type) {
 function getSessionsStyle(type) {
     var v = handler.get_local_option(getSessionsStyleOption(type));
     if (!v) v = type == "ab" ? "list" : "tile";
-    return v;
+    return "list";
 }
 
 var searchPatterns = {};
@@ -278,7 +278,7 @@ class SessionStyle: Reactor.Component {
     event click $(span.inactive) {
         var option = getSessionsStyleOption(this.type);
         var sessionsStyle = getSessionsStyle(this.type);
-        handler.set_local_option(option, sessionsStyle == "tile" ? "list" : "tile");
+        handler.set_local_option(option, "list");
         if (is_linux) {
             app.multipleSessions.stupidUpdate();
         } else {
@@ -350,8 +350,8 @@ class SessionList: Reactor.Component {
         var platform = s[3] || s.platform || "";
         var alias = s[4] || s.alias || "";
         if (this.style == "list") {
-            return <div .remote-session-link .remote-session-list id={id} platform={platform} title={alias ? "ID: " + id : ""}>
-                <div .platform style={"background: #AFD4FE"}>
+            return <div .remote-session-link .remote-session-list id={id} platform={platform} title={alias ? "ID: " + id : ""} style={"background: #AFD4FE; border-radius: 15px; height: 60px !important;"}>
+                <div .platform>
                     {platform && platformSvg(platform, "white")}
                 </div>
                 <div .name>
@@ -540,7 +540,6 @@ class MultipleSessions: Reactor.Component {
                         <span #lan class={type == "lan" ? 'active' : 'inactive'}>{translate('Discovered')}</span>
                     </div>
                     {!this.hidden && <SearchBar type={type} />}
-                    {!this.hidden && <SessionStyle type={type} />}
                 </div>
                 {!this.hidden && 
                 ((type == "fav" && <Favorites />) ||

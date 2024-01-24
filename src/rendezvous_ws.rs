@@ -5,7 +5,7 @@ use hbb_common::{
     allow_err,
     anyhow::anyhow,
     bail,
-    config::{Config, RENDEZVOUS_PORT},
+    config::{Config},
     log, ResultType,
 };
 use tokio_tungstenite::Connector::NativeTls;
@@ -40,7 +40,7 @@ pub(crate) async fn create_websocket_(
     String,
     WebSocketStream<MaybeTlsStream<TcpStream>>,
 )> {
-    let mut split = host.split("://").collect::<Vec<&str>>();
+	let mut split = host.split("://").collect::<Vec<&str>>();
     if split.len() < 1 {
         bail!("Uri must contain both scheme and host");
     } else if split.len() == 1 {
@@ -48,37 +48,58 @@ pub(crate) async fn create_websocket_(
         split.insert(0, "ws");
     }
 
-    let scheme = split[0];
-    let host = crate::check_port(split[1], RENDEZVOUS_PORT);
+    
+	//log::info!("Checking port of Signal server: {}, {} ", split[1], RENDEZVOUS_PORT);
+    let host = split[1]; //crate::check_port(split[1], RENDEZVOUS_PORT);
 
-    log::info!("Trying to connect websocket to {}", host);
+    log::info!("Resolving Signal server {}", host);
     let addr = host
         .to_socket_addrs()?
         .next()
-        .ok_or(anyhow!("Cannot resolve dns for the host"))?;
-    log::info!("Parsed addr: {:?}", &addr);
+		.ok_or_else(|| {
+			let error_msg = anyhow!("Cannot resolve dns for the host");
+			log::info!("Error: {}", error_msg); // Print the error message to the console
+			error_msg // Return the error
+		})?;
+	
+	
+        //.ok_or(anyhow!("Cannot resolve dns for the host"))?;
+    log::info!("Parsed address, connecting: {:?}", &addr);
 
-    let socket = TcpStream::connect(addr).await?;
-    let local_ip = socket.local_addr().unwrap().ip();
+
+	//let socket = TcpStream::connect(addr).await?;
+
+	use hbb_common::{
+		tokio::{self},
+
+	};
+	use std::{
+		time::Duration,
+	};
+
+	let socket = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+			.await?
+			.map_err(|_| anyhow!("TCP connection timed out"))?;
+
+		
+    //log::info!("TCPConnect: {:?}", socket);
+	let local_ip = socket.local_addr().unwrap().ip();
     let mut peer_id = Config::get_id();
     if let Some(my_peer_id) = my_peer_id {
         peer_id = my_peer_id
     }
-    let uri = format!("{}://{}/?user={}", scheme, host, peer_id);
-    log::info!("connecting to signal server: {}://{}", scheme, host);
+    let scheme = split[0];
+	let uri = format!("{}://{}/?user={}", scheme, host, peer_id);
     //Ignore invalid certificate
     let tls_opts = Some(NativeTls(
         native_tls::TlsConnector::builder()
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
+			.use_sni(false)
             .build()?,
     ));
-
-    let (websocket, _) =
-        tokio_tungstenite::connect_async_tls_with_config(&uri, None, tls_opts).await?;
-
-    //Normally check for valid certificate
-    //let (websocket, _) = tokio_tungstenite::client_async_tls(&uri, socket).await?;
+	log::info!("Connecting to signal server: {}://{}", scheme, host);
+    let (websocket, _) = tokio_tungstenite::connect_async_tls_with_config(&uri, None, true, tls_opts).await?;
 
     log::info!("Websocket connected succesfully");
     return Ok((local_ip, format!("{}://{}", scheme, host), websocket));

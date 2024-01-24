@@ -85,18 +85,6 @@ const CHARS: &[char] = &[
     'm', 'n', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
 ];
 
-/*
-pub const RENDEZVOUS_SERVERS: &[&str] = &[
-    "rs-ny.rustdesk.com",
-    "rs-sg.rustdesk.com",
-    "rs-cn.rustdesk.com",
-];
-
-pub const RS_PUB_KEY: &str = match option_env!("RS_PUB_KEY") {
-    Some(key) if !key.is_empty() => key,
-    _ => "OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=",
-};
-*/
 pub const RENDEZVOUS_PORT: i32 = 21116;
 
 macro_rules! serde_field_string {
@@ -1089,7 +1077,8 @@ impl PeerConfig {
     pub fn store(&self, id: &str) {
         let _lock = CONFIG.read().unwrap();
         let mut config = self.clone();
-        config.password = encrypt_vec_or_original(&config.password, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+        config.password = 
+        	encrypt_vec_or_original(&config.password, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
         for opt in ["rdp_password", "os-username", "os-password"] {
             if let Some(v) = config.options.get_mut(opt) {
                 *v = encrypt_str_or_original(v, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN)
@@ -1514,19 +1503,25 @@ impl HwCodecConfig {
     pub fn clear() {
         HwCodecConfig::default().store();
     }
-    
-    pub fn remove() {
-        std::fs::remove_file(Config::file_("_hwcodec")).ok();
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct GpucodecConfig {
+    #[serde(default, deserialize_with = "deserialize_string")]
+    pub available: String,
+}
+
+impl GpucodecConfig {
+    pub fn load() -> GpucodecConfig {
+        Config::load_::<GpucodecConfig>("_gpucodec")
     }
 
-    /// refresh current global HW_CODEC_CONFIG, usually uesd after HwCodecConfig::remove()
-    pub fn refresh() {
-        *HW_CODEC_CONFIG.write().unwrap() = HwCodecConfig::load();
-        log::debug!("HW_CODEC_CONFIG refreshed successfully");
+    pub fn store(&self) {
+        Config::store_(self, "_gpucodec");
     }
 
-    pub fn get() -> HwCodecConfig {
-        return HW_CODEC_CONFIG.read().unwrap().clone();
+    pub fn clear() {
+        GpucodecConfig::default().store();
     }
 }
 

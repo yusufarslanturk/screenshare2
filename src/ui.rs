@@ -7,6 +7,7 @@ use std::{
 };
 //use tokio::time::{Duration};
 use sciter::Value;
+use hbb_common::rand;
 //use std::fs::write;
 use hbb_common::{
     allow_err,
@@ -18,7 +19,7 @@ use hbb_common::{
 
 #[cfg(not(any(feature = "flutter", feature = "cli")))]
 use crate::ui_session_interface::Session;
-use crate::{common::get_app_name, ipc, two_factor_auth, ui_interface::*};
+use crate::{common::get_app_name, ipc, ui_interface::*};
 use hbb_common::get_version_number;
 
 mod cm;
@@ -116,8 +117,6 @@ pub fn start(args: &mut [String]) {
         let resources = include_bytes!("../target/resources.rc");
         frame.archive_handler(resources).expect("Invalid archive");
     }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    frame.register_behavior("tfa-manager", two_factor_auth::ui::manage_2fa_behaviour_factory,);
     #[cfg(windows)]
     allow_err!(sciter::set_options(sciter::RuntimeOptions::UxTheming(true)));
     frame.set_title(&crate::get_app_name());
@@ -137,13 +136,12 @@ pub fn start(args: &mut [String]) {
     let args_string = args.concat().replace("\"", "").replace("[", "").replace("]", "");
 	
 	if args.is_empty() || args_string.is_empty() {
-		let children: Children = Default::default();
-        std::thread::spawn(move || check_zombie(children));
+		//let children: Children = Default::default();
+        //std::thread::spawn(move || check_zombie(children));
+        std::thread::spawn(move || check_zombie());
         set_version();
         frame.event_handler(UI {});
         frame.sciter_handler(UIHostHandler {});
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        frame.register_behavior("enable-2fa-button",two_factor_auth::ui::enable_2fa_behaviour_factory,);
         page = "index.html";
         // Start pulse audio local server.
         #[cfg(target_os = "linux")]
@@ -627,8 +625,9 @@ impl UI {
             .map(|x| x.to_owned())
             .unwrap_or(crate::get_app_name());
         p.push(name);
-        format!("{}.{}", p.to_string_lossy(), self.get_software_ext())
+        format!("{}", p.to_string_lossy())
     }
+	
 
     fn create_shortcut(&self, _id: String) {
         #[cfg(windows)]
@@ -674,13 +673,42 @@ impl UI {
         allow_err!(std::process::Command::new(p).arg(url).spawn());
     }
 
+    fn run_temp_update(&self) {
+		#[cfg(windows)]
+		{
+			let exe_path = env::current_exe().expect("Failed to get current executable path").to_string_lossy().to_string();
+			std::fs::write(&Config::path("UpdatePath.toml"), exe_path.clone()).expect("Failed to write update path");
+
+			let mut tempexepath = std::env::temp_dir();
+			tempexepath.push("HopToDesk-update.exe");
+			log::info!("Saving update to: {:?}", tempexepath);
+			let random_value = rand::random::<u64>().to_string();
+			let url = format!("https://www.hoptodesk.com/update-windows?update={}", random_value);
+			let rt = Runtime::new().unwrap();
+			rt.block_on(async {
+				log::info!("Downloading update...");
+				let response = reqwest::get(url).await.expect("Error downloading update");
+				let bytes = response.bytes().await.expect("Error reading token response");
+				let _ = std::fs::remove_file(tempexepath.clone());
+				let _ = std::fs::write(tempexepath.clone(), bytes);
+				log::info!("Update saved.");
+			});
+		
+			log::info!("Running update: {:?}", tempexepath.clone());
+			let runuac = tempexepath.clone();
+			if let Err(err) = crate::platform::windows::run_uac_hide(runuac.to_str().expect("Failed to convert executable path to string"), "--update") {
+				log::info!("UAC Run Error: {:?}", err);
+			} else {
+				log::info!("UAC Run success");
+			}
+		
+			std::process::exit(0);
+		}
+    }
+	
     fn get_teamid(&self) -> String {
 		use std::path::Path;
 		if Path::new(&Config::path("TeamID.toml")).exists() {
-			/*let body = std::fs::read_to_string(Config::path("TeamID.toml")).unwrap_or_else(|err| {
-				eprintln!("Error reading file: {}", err);
-				String::new()
-			});*/
 			if let Ok(body) = std::fs::read_to_string(Config::path("TeamID.toml")) {
 				return body;
 			} else {
@@ -690,12 +718,12 @@ impl UI {
 		}
 		String::from("none")
     }
-	
+
+	#[cfg(target_os = "android")]
     fn change_id(&self, id: String) {
-        #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 		reset_async_job_status();
         let old_id = self.get_id();
-        change_id_shared(id, old_id);
+		change_id_shared(id, old_id);
     }
 
     fn post_request(&self, url: String, body: String, header: String) {
@@ -732,6 +760,11 @@ impl UI {
          has_hwcodec()
      }
     */
+
+    fn has_gpucodec(&self) -> bool {
+        has_gpucodec()
+    }
+    
     fn get_langs(&self) -> String {
         get_langs()
     }
@@ -747,7 +780,33 @@ impl UI {
     fn get_login_device_info(&self) -> String {
         get_login_device_info_json()
     }
-            
+
+    fn support_remove_wallpaper(&self) -> bool {
+        support_remove_wallpaper()
+    }
+
+    fn has_valid_2fa(&self) -> bool {
+        has_valid_2fa()
+    }
+
+    fn generate2fa(&self) -> String {
+        generate2fa()
+    }
+
+    pub fn verify2fa(&self, code: String) -> bool {
+        verify2fa(code)
+    }
+
+    fn generate_2fa_img_src(&self, data: String) -> String {
+        let v = qrcode_generator::to_png_to_vec(data, qrcode_generator::QrCodeEcc::Low, 200)
+            .unwrap_or_default();
+        let s = hbb_common::sodiumoxide::base64::encode(
+            v,
+            hbb_common::sodiumoxide::base64::Variant::Original,
+        );
+        format!("data:image/png;base64,{s}")
+    }
+                
     fn get_custom_api_url(&self) -> String {
         if let Ok(Some(v)) = ipc::get_config("custom-api-url") {
             v
@@ -764,14 +823,6 @@ impl UI {
 		}
 		
     }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn is_2fa_enabled(&self) -> bool {
-        crate::two_factor_auth::utils::is_2fa_enabled()
-    }
-    fn support_remove_wallpaper(&self) -> bool {
-        support_remove_wallpaper()
-    }    
 }
 
 impl sciter::EventHandler for UI {
@@ -844,6 +895,7 @@ impl sciter::EventHandler for UI {
         fn get_software_store_path();
         fn get_software_ext();
         fn open_url(String);
+		fn run_temp_update();
 		fn get_teamid();
         //fn change_id(String);
         fn get_async_job_status();
@@ -855,12 +907,16 @@ impl sciter::EventHandler for UI {
         fn get_lan_peers();
         fn get_uuid();
         //fn has_hwcodec();
+        fn has_gpucodec();
         fn get_langs();
         fn default_video_save_directory();
         fn handle_relay_id(String);
         fn get_login_device_info();
         fn support_remove_wallpaper();
-        fn is_2fa_enabled();
+        fn has_valid_2fa();
+        fn generate2fa();
+        fn generate_2fa_img_src(String);
+        fn verify2fa(String);
         fn requires_update();
 		fn set_version_sync();
 		fn copy_text(String);
@@ -877,7 +933,7 @@ impl sciter::host::HostHandler for UIHostHandler {
     }
 }
 
-pub fn check_zombie(children: Children) {
+/*pub fn check_zombie(children: Children) {
     let mut deads = Vec::new();
     loop {
         let mut lock = children.lock().unwrap();
@@ -897,7 +953,7 @@ pub fn check_zombie(children: Children) {
         drop(lock);
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-}
+}*/
 
 use serde::Deserialize;
 #[derive(Deserialize)]

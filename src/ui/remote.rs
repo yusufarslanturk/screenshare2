@@ -415,6 +415,7 @@ impl sciter::EventHandler for SciterSession {
         fn is_port_forward();
         fn is_rdp();
         fn login(String, String, String, bool);
+        fn send2fa(String);
         fn new_rdp();
         fn send_mouse(i32, i32, i32, bool, bool, bool, bool);
         fn enter(String);
@@ -505,7 +506,7 @@ impl SciterSession {
             .lc
             .write()
             .unwrap()
-            .initialize(id, conn_type, None, force_relay, tokenexp);
+            .initialize(id, conn_type, None, force_relay, None, tokenexp);
 
         Self(session)
     }
@@ -747,6 +748,29 @@ impl SciterSession {
         "".to_owned()
     }
 
+	fn transfer_file(&mut self) {
+	    let id = self.get_id();
+	    let id_password = crate::ipc::get_password_for_file_transfer();
+	    let id_passwords: Vec<&str> = id_password.split(":").collect();
+	
+	    let args = if !id_password.is_empty() {
+	        let idd = id_passwords[0];
+	        let password = id_passwords[1];
+	        if !password.is_empty() && idd == id {
+	            vec!["--file-transfer", &id, password]
+	        } else {
+	            vec!["--file-transfer", &id, &self.password]
+	        }
+	    } else {
+	        vec!["--file-transfer", &id, &self.password]
+	    };
+	    if let Err(err) = crate::run_me(args) {
+	        log::error!("Failed to spawn file transfer: {}", err);
+	    }
+	}
+	
+
+/*
     fn transfer_file(&mut self) {
         let id = self.get_id();
         let id_password = crate::ipc::get_password_for_file_transfer();
@@ -767,7 +791,7 @@ impl SciterSession {
             log::error!("Failed to spawn file transfer: {}", err);
         }
     }
-
+*/
     fn tunnel(&mut self) {
         let id = self.get_id();
         let args = vec!["--port-forward", &id, &self.password];

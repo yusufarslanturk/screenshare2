@@ -268,7 +268,7 @@ class _GeneralState extends State<_General> {
           children: [
             service(),
             theme(),
-            hwcodec(),
+            //hwcodec(),
             audio(context),
             record(context),
             _Card(title: 'Language', children: [language()]),
@@ -386,7 +386,7 @@ class _GeneralState extends State<_General> {
       return Offstage();
     });
   }
-
+/*
   Widget hwcodec() {
     return Offstage(
       offstage: !bind.mainHasHwcodec(),
@@ -395,7 +395,7 @@ class _GeneralState extends State<_General> {
       ]),
     );
   }
-
+*/
   Widget audio(BuildContext context) {
     String getDefault() {
       if (Platform.isWindows) return translate('System Sound');
@@ -565,12 +565,52 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
                   child: Column(children: [
                     permissions(context),
                     password(context),
+                    _Card(title: '2FA', children: [tfa()]),
                     _Card(title: 'ID', children: [changeId()]),
                     more(context),
                   ]),
                 ),
               ],
             )).marginOnly(bottom: _kListViewBottomMargin));
+  }
+
+  Widget tfa() {
+    bool enabled = !locked;
+    // Simple temp wrapper for PR check
+    tmpWrapper() {
+      RxBool has2fa = bind.mainHasValid2FaSync().obs;
+      update() async {
+        has2fa.value = bind.mainHasValid2FaSync();
+      }
+
+      onChanged(bool? checked) async {
+        change2fa(callback: update);
+      }
+
+      return GestureDetector(
+        child: InkWell(
+          child: Obx(() => Row(
+                children: [
+                  Checkbox(
+                          value: has2fa.value,
+                          onChanged: enabled ? onChanged : null)
+                      .marginOnly(right: 5),
+                  Expanded(
+                      child: Text(
+                    translate('enable-2fa-title'),
+                    style:
+                        TextStyle(color: _disabledTextColor(context, enabled)),
+                  ))
+                ],
+              )),
+        ),
+        onTap: () {
+          onChanged(!has2fa.value);
+        },
+      ).marginOnly(left: _kCheckBoxLeftMargin);
+    }
+
+    return tmpWrapper();
   }
 
   Widget changeId() {

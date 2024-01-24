@@ -14,9 +14,7 @@ class Body: Reactor.Component
     function this() {
         body = this;
         var thisptr = this;
-        this.auth_2fa_answer = null;
         this.security_code = false;
-        handler.on_2fa_answer = function(answer) {return thisptr.on_2fa_answer(thisptr, answer);};
     }
 
     function render() {
@@ -28,7 +26,6 @@ class Body: Reactor.Component
         this.connection = c;
         this.cid = c.id;
         var auth = c.authorized;
-		var auth_2fa = handler.is_2fa_enabled() ? this.auth_2fa_answer == "ALLOWED" : true;
         var me = this;
         var callback = function(msg) {
             me.sendMsg(msg);
@@ -84,9 +81,8 @@ class Body: Reactor.Component
                     </ul></div> :
                         <div .url-image></div>}
                 <div .buttons>
-                     {!auth_2fa ? <span .auth-2fa-msg>{translate('Approve the request on HopToDesk 2FA')}</span> : ""}
-                     {auth || !auth_2fa ? "" : <button .button tabindex="-1" #accept>{translate('Accept')}</button>}
-                     {auth ? "" : <button .button tabindex="-1" .outline #dismiss>{translate('Dismiss')}</button>}
+                    {!auth && show_accept_btn ? <button #accept .control .button>{translate('Accept')}</button> : "" }
+                    {!auth ? <button #dismiss .control .outline>{translate('Dismiss')}</button> : "" }
                      {auth && !disconnected ? <button .button tabindex="-1" #disconnect>{translate('Disconnect')}</button> : ""}
                 </div>
                 {c.is_file_transfer || c.port_forward ? "" : <div .chaticon>{svg_chat}</div>}
@@ -240,20 +236,7 @@ class Body: Reactor.Component
         }
         
     }
-
-    function on_2fa_answer(self, answer) {
-        self.auth_2fa_answer = answer;
-		body.update();
-        if (handler.get_option("enable-2fa-auto-accept") != "N") {
-            self.connection.authorized = true;
-            body.update();
-            handler.authorize(self.cid);
-            self.timer(30ms, function() {
-                view.windowState = View.WINDOW_MINIMIZED;
-            });
-        }
-    }
-    
+ 
     event click $(div.keylock) {
         var connection = this.connection;
         var self = this;
@@ -261,6 +244,7 @@ class Body: Reactor.Component
             checkClickTime(function() {
                 self.security_code = true;
                 var nums = connection.security_numbers;
+				var avatarimage = connection.avatar_image;
 				nums = generate_security_number_block(nums);
 				$(#seccodee).content(nums);
             });

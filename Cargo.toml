@@ -1,11 +1,12 @@
 [package]
 name = "hoptodesk"
-version = "1.41.4"
+version = "1.41.5"
 authors = ["hoptodesk <info@hoptodesk.com>"]
 edition = "2021"
 build= "build.rs"
 description = "A remote control software."
 default-run = "hoptodesk"
+rust-version = "1.75"
 
 [lib]
 name = "libhoptodesk"
@@ -47,7 +48,6 @@ magnum-opus = { git = "https://github.com/rustdesk/magnum-opus" }
 dasp = { version = "0.11", features = ["signal", "interpolate-linear", "interpolate"], optional = true }
 rubato = { version = "0.12", optional = true }
 samplerate = { version = "0.2", optional = true }
-async-trait = "0.1"
 uuid = { version = "1.3", features = ["v4"] }
 clap = "4.2"
 rpassword = "7.2"
@@ -72,13 +72,12 @@ webpki-roots = "0.24"
 fon = "0.6"
 webrtc-util = "0.7"
 futures = "0.3"
-qrcode = "0.12.0"
-md5 = "0.7.0"
 shutdown_hooks = "0.1"
+totp-rs = { version = "5.4", default-features = false, features = ["gen_secret", "otpauth"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features=false }
-tokio-tungstenite = { version = "^0.17.2", features = ["native-tls"] }
+tokio-tungstenite = { version = "^0.21.0", features = ["native-tls"] }
 native-tls = "0.2.10"
 
 [target.'cfg(not(any(target_os = "android", target_os = "linux")))'.dependencies]
@@ -87,7 +86,7 @@ ringbuf = "0.3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 mac_address = "1.1"
-sciter-rs = { git = "https://github.com/open-trade/rust-sciter", branch = "dyn" }
+sciter-rs = { git = "https://github.com/open-trade/rust-sciter", branch = "dyn_x86" }
 sys-locale = "0.3"
 enigo = { path = "libs/enigo", features = [ "with_serde" ] }
 clipboard = { path = "libs/clipboard" }
@@ -95,9 +94,9 @@ copypasta = "0.8.2"
 ctrlc = "3.2"
 arboard = { version = "3.2", features = ["wayland-data-control"] }
 system_shutdown = "4.0"
+qrcode-generator = "4.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-trayicon = { git = "https://github.com/open-trade/trayicon-rs", features = ["winit"] }
 winapi = { version = "0.3", features = ["winuser", "wincrypt"] }
 winreg = "0.50"
 windows-service = "0.6"
@@ -135,7 +134,7 @@ evdev = { git="https://github.com/fufesou/evdev" }
 dbus = "0.9"
 dbus-crossroads = "0.5"
 xrandr-parser = "0.3.0"
-tokio-tungstenite = { version = "^0.17.2", features = ["native-tls-vendored"] }
+tokio-tungstenite = { version = "^0.21.0", features = ["native-tls-vendored"] }
 native-tls = { version = "0.2.10", features = ["vendored"] }
 users = { version = "0.11" }
 keepawake = { git = "https://github.com/rustdesk-org/keepawake-rs" }
@@ -145,7 +144,6 @@ android_logger = "0.13"
 jni = "0.21"
 android-wakelock = { git = "https://github.com/21pages/android-wakelock" }
 openssl = { version = "0.10", features = ["vendored"] }
-
 
 [workspace]
 members = ["libs/scrap", "libs/hbb_common", "libs/enigo", "libs/clipboard", "libs/virtual_display", "libs/turn"]

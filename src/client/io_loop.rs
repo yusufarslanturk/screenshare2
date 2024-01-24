@@ -191,7 +191,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             } else {
                                 if self.handler.is_restarting_remote_device() {
                                     log::info!("Restart remote device");
-                                    self.handler.msgbox("restarting", "Restarting Remote Device", "remote_restarting_tip", "");
+                                    self.handler.msgbox("restarting", "Restarting remote device", "remote_restarting_tip", "");
                                 } else {
                                     log::info!("Connection lost");
                                     self.handler.msgbox("error", "Connection Error", "Connection lost", "");
@@ -233,12 +233,9 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                             fps_instant = Instant::now();
                             let mut speed = self.data_count.swap(0, Ordering::Relaxed);
-                            //speed = speed * 1000 / elapsed as usize;
-
-							if let Some(new_speed) = speed.checked_mul(1000).and_then(|result| result.checked_div(elapsed as usize)) {
+							if let Some(new_speed) = speed.checked_mul(1000).and_then(|result| result.checked_div(elapsed as usize)) { //hophere
 								speed = new_speed;
 							}
-
                             let speed = format!("{:.2}kB/s", speed as f32 / 1024 as f32);
 
                             let mut frame_count_map_write = self.frame_count_map.write().unwrap();
@@ -1494,6 +1491,11 @@ impl<T: InvokeUiSession> Remote<T> {
                         };
                         self.handler.msgbox("custom-nocancel", &name, &p.msg, "");
                     }
+                    Some(misc::Union::SupportedEncoding(e)) => {
+                        log::info!("update supported encoding:{:?}", e);
+                        self.handler.lc.write().unwrap().supported_encoding = e;
+                    }
+
                     _ => {}
                 },
                 Some(message::Union::TestDelay(t)) => {

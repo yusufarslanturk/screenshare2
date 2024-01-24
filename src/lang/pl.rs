@@ -307,8 +307,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("The peer has exited from Privacy Mode.", "Wyjście ze zdalnego urządzenia"),
         ("Failed to turn off", "Nie udało się wyłączyć"),
         ("Turned off", "Wyłączony"),
-        ("In privacy mode", "Uruchom tryb prywatności"),
-        ("Out privacy mode", "Opuść tryb prywatności"),
 		("Language", "Język"),
         ("Keep HopToDesk background service", "Zachowaj usługę w tle HopToDesk"),
         ("Ignore Battery Optimizations", "Ignoruj optymalizację baterii"),
@@ -586,9 +584,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("swap-left-right-mouse", "Zamień przyciski myszki (lewy - prawy)"),        
 		("Enable Wake On LAN", "Włącz Wake On LAN"),
 		("Enable 2FA", "Włącz 2FA"),
-        ("Enable 2FA Auto Accept", "Włącz automatyczną akceptację 2FA"),		
-		("2FA QR Code", "Kod QR 2FA"),
-        ("Scan this QR code with a camera on a secondary device such as a phone to set it up as your 2FA authenticator.", "Zeskanuj ten kod QR za pomocą aparatu na drugim urządzeniu, takim jak telefon, aby skonfigurować go jako uwierzytelnianie 2FA."),
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Podczas próby połączenia z tym pulpitem musisz potwierdzić 2FA na drugim urządzeniu."),		
 		("Unattended Access", "Dostęp Nienadzorowany"),				
     ].iter().cloned().collect();

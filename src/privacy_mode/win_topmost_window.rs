@@ -1,6 +1,5 @@
 use super::{PrivacyMode, INVALID_PRIVACY_MODE_CONN_ID};
 use crate::{privacy_mode::PrivacyModeState};
-//use crate::{platform::windows::get_user_token, privacy_mode::PrivacyModeState};
 use hbb_common::{allow_err, bail, log, ResultType};
 use std::{
     ffi::CString,
@@ -105,7 +104,6 @@ impl PrivacyMode for PrivacyModeImpl {
 					return Ok(false);
 				}
 			}
-			
         } else {
             bail!(
                 "Invalid exe parent for {}",
@@ -205,14 +203,44 @@ impl PrivacyModeImpl {
         }
 
 		let program_name = "privacyhelper.exe";
-		let start_in_directory = env::temp_dir().to_string_lossy().to_string();
-		let program_path = PathBuf::from(&start_in_directory).join(program_name);
-		if !program_path.exists() {
-			eprintln!("Program not found at: {:?}", program_path);
-            return Ok(());
-		}
+		let exe_file = std::env::current_exe()?;
 
-		println!("Running program: {:?}", program_path);
+		let start_in_directory = if !crate::platform::is_installed() {
+		    env::temp_dir().to_string_lossy().to_string()
+		} else {
+		    exe_file.parent().unwrap().to_string_lossy().to_string()
+		};
+		
+		let mut program_path = PathBuf::from(&start_in_directory).join(program_name);
+		
+		if !program_path.exists() {
+			log::info!("NOT Found {:?}", program_path);
+			program_path = PathBuf::from(&env::temp_dir().to_string_lossy().to_string()).join(program_name);
+		} 
+		
+		if !program_path.exists() {
+			log::info!("NOT Found 2 {:?}", program_path);
+			program_path = PathBuf::from(&exe_file.parent().unwrap().to_string_lossy().to_string()).join(program_name);
+		}
+		
+		log::info!("Program path: {:?}", program_path);
+
+		if crate::platform::is_installed() {
+			log::info!("Is installed: true");
+		}
+		
+		if !program_path.exists() {
+			log::info!("File does not exist: {:?}", program_path);
+		}
+	
+		if !program_path.exists() {
+			let exe_path = env::current_exe()?;
+			program_path = exe_path.parent().map(|p| p.join(program_name)).unwrap_or(program_path);
+			if !program_path.exists() {
+				log::info!("Program not found at: {:?}", program_path);
+				return Ok(());
+			}
+		}
 
 		let output = Command::new(&program_path)
 			.current_dir(&start_in_directory)
@@ -222,13 +250,13 @@ impl PrivacyModeImpl {
 			Ok(mut child) => {
 				let exit_status = child.wait().expect("Failed to wait for child process");
 				if exit_status.success() {
-					println!("Program executed successfully.");
+					//log::info!("Privacy Helper executed successfully.");
 				} else {
-					println!("Program failed with exit code: {:?}", exit_status.code());
+					log::info!("Privacy Helper failed with exit code: {:?}", exit_status.code());
 				}
 			}
 			Err(e) => {
-				eprintln!("Error executing the program: {:?}", e);
+				log::info!("Error executing Privacy Helper: {:?}", e);
 			}
 		}
 		

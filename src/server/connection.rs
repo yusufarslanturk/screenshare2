@@ -1,5 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::two_factor_auth::TFAManager;
 use super::{input_service::*, *};
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use crate::clipboard_file::*;
@@ -72,7 +70,7 @@ use std::collections::HashSet;
 pub type Sender = mpsc::UnboundedSender<(Instant, Arc<Message>)>;
 
 lazy_static::lazy_static! {
-    static ref LOGIN_FAILURES: Arc::<Mutex<HashMap<String, (i32, i32, i32)>>> = Default::default();
+    static ref LOGIN_FAILURES: [Arc::<Mutex<HashMap<String, (i32, i32, i32)>>>; 2] = Default::default();
     static ref SESSIONS: Arc::<Mutex<HashMap<String, Session>>> = Default::default();
     static ref ALIVE_CONNS: Arc::<Mutex<Vec<i32>>> = Default::default();
     static ref AUTHED_CONNS: Arc::<Mutex<Vec<(i32, AuthConnType)>>> = Default::default();
@@ -155,6 +153,7 @@ struct Session {
     session_id: u64,
     last_recv_time: Arc<Mutex<Instant>>,
     random_password: String,
+    tfa: bool,
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -186,6 +185,7 @@ pub struct Connection {
     port_forward_address: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
+    require_2fa: Option<totp_rs::TOTP>,
     keyboard: bool,
     clipboard: bool,
     audio: bool,
@@ -193,8 +193,8 @@ pub struct Connection {
     restart: bool,
     recording: bool,
     block_input: bool,
-    last_test_delay: i64,
-    network_delay: Option<u32>,
+    last_test_delay: Option<Instant>,
+    network_delay: u32,
     lock_after_session_end: bool,
     show_remote_cursor: bool,
     // by peer
@@ -236,6 +236,8 @@ pub struct Connection {
     auto_disconnect_timer: Option<(Instant, u64)>,
     authed_conn_id: Option<self::raii::AuthedConnID>,    
     file_remove_log_control: FileRemoveLogControl,
+    #[cfg(feature = "gpucodec")]
+    supported_encoding_flag: (bool, Option<bool>),
     security_numbers: String,
     avatar_image: String,
 }
@@ -315,7 +317,6 @@ impl Connection {
         let linux_headless_handle =
             LinuxHeadlessHandle::new(_rx_cm_stream_ready, _tx_desktop_ready);
 
-        let tx_to_cm_2fa = tx_to_cm.clone();
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let tx_cloned = tx.clone();
         let mut conn = Self {
@@ -324,6 +325,7 @@ impl Connection {
                 tx: Some(tx),
                 tx_video: Some(tx_video),
             },
+            require_2fa: crate::auth_2fa::get_2fa(None),
             display_idx: *display_service::PRIMARY_DISPLAY_IDX,
             stream,
             server,
@@ -344,8 +346,8 @@ impl Connection {
             restart: Connection::permission("enable-remote-restart"),
             recording: Connection::permission("enable-record-session"),
             block_input: Connection::permission("enable-block-input"),
-            last_test_delay: 0,
-            network_delay: None,
+            last_test_delay: None,
+            network_delay: 0,
             lock_after_session_end: false,
             show_remote_cursor: false,
             ip: "".to_owned(),
@@ -386,6 +388,8 @@ impl Connection {
             auto_disconnect_timer: None,
             authed_conn_id: None,
             file_remove_log_control: FileRemoveLogControl::new(id),
+            #[cfg(feature = "gpucodec")]
+            supported_encoding_flag: (false, None),
         };
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
@@ -417,8 +421,7 @@ impl Connection {
         if !conn.block_input {
             conn.send_permission(Permission::BlockInput, false).await;
         }
-        let mut test_delay_timer =
-            time::interval_at(Instant::now() + TEST_DELAY_TIMEOUT, TEST_DELAY_TIMEOUT);
+		let mut test_delay_timer = time::interval(TEST_DELAY_TIMEOUT);
         let mut last_recv_time = Instant::now();
 
         conn.stream.set_send_timeout(
@@ -429,21 +432,7 @@ impl Connection {
             },
         );
 
-        let id_str = id.to_string();
-
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        if TFAManager::is_2fa_enabled() {
-            let tx = tx_to_cm_2fa;
-            let id_s = id_str.clone();
-            TFAManager::start_checking(&id_s).await;
-            TFAManager::add_callback(
-                &id_str,
-                Box::new(move |answer| {
-                    let _ = tx.send(Data::TFA { id, answer });
-                }),
-            )
-            .await;
-        }
+        //let _id_str = id.to_string();
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         std::thread::spawn(move || Self::handle_input(_rx_input, tx_cloned));
@@ -456,6 +445,7 @@ impl Connection {
                 Some(data) = rx_from_cm.recv() => {
                     match data {
                         ipc::Data::Authorize => {
+                            conn.require_2fa.take();
                             conn.send_logon_response().await;
                             if conn.port_forward_socket.is_some() {
                                 break;
@@ -472,8 +462,6 @@ impl Connection {
                             conn.on_close("Close requested from connection manager", false).await;
                             SESSIONS.lock().unwrap().remove(&conn.lr.my_id);
 							log::info!("Closed: {}", &conn.lr.my_id);
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            TFAManager::remove_checker(&id_str).await;
 
                             break;
                         }		
@@ -605,6 +593,9 @@ impl Connection {
                                     if !conn.on_message(msg_in).await {
                                         break;
                                     }
+                                    if conn.port_forward_socket.is_some() && conn.authorized {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -694,20 +685,20 @@ impl Connection {
                         }
                     }
                     conn.file_remove_log_control.on_timer().drain(..).map(|x| conn.send_to_cm(x)).count();
+                    #[cfg(feature = "gpucodec")]
+                    conn.update_supported_encoding();
                 }
                 _ = test_delay_timer.tick() => {
                     if last_recv_time.elapsed() >= SEC30 {
                         conn.on_close("Timeout", true).await;
                         break;
                     }
-                    let time = get_time();
                     let mut qos = video_service::VIDEO_QOS.lock().unwrap();
-                    if time > 0 && conn.last_test_delay == 0 {
-                        conn.last_test_delay = time;
+                    if conn.last_test_delay.is_none() {
+                        conn.last_test_delay = Some(Instant::now());
                         let mut msg_out = Message::new();
                         msg_out.set_test_delay(TestDelay{
-                            time,
-                            last_delay:conn.network_delay.unwrap_or_default(),
+                            last_delay: conn.network_delay,
                             target_bitrate: qos.bitrate(),
                             ..Default::default()
                         });
@@ -1076,6 +1067,10 @@ impl Connection {
         if self.authorized {
             return;
         }
+        if self.require_2fa.is_some() && !self.is_recent_session(true) {
+            self.send_login_error(crate::client::REQUIRE_2FA).await;
+            return;
+        }
         let (_conn_type, auth_conn_type) = if self.file_transfer.is_some() {
             (1, AuthConnType::FileTransfer)
         } else if self.port_forward_socket.is_some() {
@@ -1167,7 +1162,10 @@ impl Connection {
             pi.platform_additions = serde_json::to_string(&platform_additions).unwrap_or("".into());
         }
 
-		pi.encoding = Some(scrap::codec::Encoder::supported_encoding()).into();
+		//pi.encoding = Some(scrap::codec::Encoder::supported_encoding()).into();
+        let supported_encoding = scrap::codec::Encoder::supported_encoding();
+        log::info!("peer info supported_encoding: {:?}", supported_encoding);
+        pi.encoding = Some(supported_encoding).into();		
 
         if self.port_forward_socket.is_some() {
             let mut msg_out = Message::new();
@@ -1459,7 +1457,6 @@ impl Connection {
 				let myid = Config::get_id();
 				
 				log::info!("Checking token: {}", self.lr.tokenex);
-				//self.lr.my_id.clone()
 				let url = format!(
 					"https://api.hoptodesk.com/?token={}&teamid={}&id={}&remoteid={}", self.lr.tokenex, body, myid, self.lr.my_id.clone()
 				);
@@ -1490,6 +1487,7 @@ impl Connection {
                         session_id: self.lr.session_id,
                         last_recv_time: self.last_recv_time.clone(),
                         random_password: password,
+                        tfa: false,
                     },
                 );
                 return true;
@@ -1503,7 +1501,7 @@ impl Connection {
         false
     }
 	
-    fn is_recent_session(&mut self) -> bool {
+    fn is_recent_session(&mut self, tfa: bool) -> bool {
         SESSIONS
             .lock()
             .unwrap()
@@ -1514,13 +1512,16 @@ impl Connection {
             .get(&self.lr.my_id)
             .map(|s| s.to_owned());
         // last_recv_time is a mutex variable shared with connection, can be updated lively.            
-        if let Some(session) = session {
+        if let Some(mut session) = session {
             if session.name == self.lr.my_name
                 && session.session_id == self.lr.session_id
                 && !self.lr.password.is_empty()
-                && self.validate_one_password(session.random_password.clone())
+                && (tfa && session.tfa
+                    || !tfa && self.validate_one_password(session.random_password.clone()))
             {
-                SESSIONS.lock().unwrap().insert(
+                session.last_recv_time = self.last_recv_time.clone();
+                
+/*                SESSIONS.lock().unwrap().insert(
                     self.lr.my_id.clone(),
                     Session {
                         name: self.lr.my_name.clone(),
@@ -1528,7 +1529,11 @@ impl Connection {
                         last_recv_time: self.last_recv_time.clone(),
                         random_password: session.random_password,
                     },
-                );
+                );*/
+                SESSIONS
+                    .lock()
+                    .unwrap()
+                    .insert(self.lr.my_id.clone(), session);                
                 return true;
             }
         }
@@ -1550,23 +1555,15 @@ impl Connection {
     }
 
     fn update_codec_on_login(&self) {
+        use scrap::codec::{Encoder, EncodingUpdate::*};
         if let Some(o) = self.lr.clone().option.as_ref() {
             if let Some(q) = o.supported_decoding.clone().take() {
-                scrap::codec::Encoder::update(
-                    self.inner.id(),
-                    scrap::codec::EncodingUpdate::New(q),
-                );
+                Encoder::update(Update(self.inner.id(), q));
             } else {
-                scrap::codec::Encoder::update(
-                    self.inner.id(),
-                    scrap::codec::EncodingUpdate::NewOnlyVP9,
-                );
+                Encoder::update(NewOnlyVP9(self.inner.id()));
             }
         } else {
-            scrap::codec::Encoder::update(
-                self.inner.id(),
-                scrap::codec::EncodingUpdate::NewOnlyVP9,
-            );
+            Encoder::update(NewOnlyVP9(self.inner.id()));
         }
     }
 
@@ -1707,16 +1704,13 @@ impl Connection {
             {
                 self.send_login_error("Connection not allowed").await;
                 return false;
-            } else if self.is_recent_session() {
+            } else if self.is_recent_session(false) {
                 if err_msg.is_empty() {
                     #[cfg(all(target_os = "linux", feature = "linux_headless"))]
                     #[cfg(not(any(feature = "flatpak", feature = "appimage")))]
                     self.linux_headless_handle.wait_desktop_cm_ready().await;
-	                self.try_start_cm(lr.my_id, lr.my_name, lr.avatar_image, true);
                     self.send_logon_response().await;
-                    if self.port_forward_socket.is_some() {
-                        return false;
-                    }
+                    self.try_start_cm(lr.my_id.clone(), lr.my_name.clone(), lr.avatar_image, self.authorized);
                 } else {
                     self.send_login_error(err_msg).await;
                 }
@@ -1730,55 +1724,12 @@ impl Connection {
                     .await;
                 }
             } else {
-                if !password::has_valid_password() {
-                    self.send_login_error("Connection not allowed").await;
-                    return false;
+                let (failure, res) = self.check_failure(0).await;
+                if !res {
+                    return true;
                 }
-                let mut failure = LOGIN_FAILURES
-                    .lock()
-                    .unwrap()
-                    .get(&self.ip)
-                    .map(|x| x.clone())
-                    .unwrap_or((0, 0, 0));
-                let time = (get_time() / 60_000) as i32;
-                if failure.2 > 30 {
-                    self.send_login_error("Too many wrong password attempts")
-                        .await;
-                /*
-                    Self::post_alarm_audit(
-                        AlarmAuditType::ExceedThirtyAttempts,
-                        json!({
-                                    "ip":self.ip,
-                                    "id":lr.my_id.clone(),
-                                    "name": lr.my_name.clone(),
-                        }),
-                    );
-                */
-                } else if time == failure.0 && failure.1 > 6 {
-                    self.send_login_error("Please try 1 minute later").await;
-                /*
-                    Self::post_alarm_audit(
-                        AlarmAuditType::SixAttemptsWithinOneMinute,
-                        json!({
-                                    "ip":self.ip,
-                                    "id":lr.my_id.clone(),
-                                    "name": lr.my_name.clone(),
-                        }),
-                    );
-                */
-                } else if !self.validate_password().await {
-                    if failure.0 == time {
-                        failure.1 += 1;
-                        failure.2 += 1;
-                    } else {
-                        failure.0 = time;
-                        failure.1 = 1;
-                        failure.2 += 1;
-                    }
-                    LOGIN_FAILURES
-                        .lock()
-                        .unwrap()
-                        .insert(self.ip.clone(), failure);
+                if !self.validate_password().await {
+                    self.update_failure(failure, false, 0);
                     if err_msg.is_empty() {
                         self.send_login_error(crate::client::LOGIN_MSG_PASSWORD_WRONG)
                             .await;
@@ -1792,46 +1743,57 @@ impl Connection {
                     
 
                 } else {
-                    if failure.0 != 0 {
-                        LOGIN_FAILURES.lock().unwrap().remove(&self.ip);
-                    }
-
-                    // always true when 2fa not enabled
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    let auth_2fa = if TFAManager::is_2fa_enabled() {
-                        log::debug!("2FA YES");
-                        Some(AuthAnswer::Allowed)
-                            == TFAManager::get_answer(&self.inner.id.to_string()).await
-                    } else {
-                        log::debug!("2FA NO");
-                        true
-                    };
-
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    if auth_2fa {
-                        self.try_start_cm(lr.my_id, lr.my_name, lr.avatar_image, true);
+                    self.update_failure(failure, true, 0);
+                    if err_msg.is_empty() {
+                        #[cfg(all(target_os = "linux", feature = "linux_headless"))]
+                        #[cfg(not(any(feature = "flatpak", feature = "appimage")))]
+                        self.linux_headless_handle.wait_desktop_cm_ready().await;
+		                SESSIONS.lock().unwrap().remove(&lr.my_id);
                         self.send_logon_response().await;
-                        if self.port_forward_socket.is_some() {
-                            return false;
+                        self.try_start_cm(lr.my_id, lr.my_name, lr.avatar_image, self.authorized);
+                    } else {
+                        self.send_login_error(err_msg).await;
+                    }
+                }
+            }
+        } else if let Some(message::Union::Auth2fa(tfa)) = msg.union {
+            let (failure, res) = self.check_failure(1).await;
+            if !res {
+                return true;
+            }
+            if let Some(totp) = self.require_2fa.as_ref() {
+                if let Ok(code) = totp.generate_current() {
+                    if tfa.code == code {
+                        self.update_failure(failure, true, 1);
+                        self.require_2fa.take();
+                        self.send_logon_response().await;
+                        let session = SESSIONS
+                            .lock()
+                            .unwrap()
+                            .get(&self.lr.my_id)
+                            .map(|s| s.to_owned());
+                        if let Some(mut session) = session {
+                            session.tfa = true;
+                            SESSIONS
+                                .lock()
+                                .unwrap()
+                                .insert(self.lr.my_id.clone(), session);
+                        } else {
+                            SESSIONS.lock().unwrap().insert(
+                                self.lr.my_id.clone(),
+                                Session {
+                                    name: self.lr.my_name.clone(),
+                                    session_id: self.lr.session_id,
+                                    last_recv_time: self.last_recv_time.clone(),
+                                    random_password: "".to_owned(),
+                                    tfa: true,
+                                },
+                            );
                         }
                     } else {
-                        SESSIONS.lock().unwrap().remove(&lr.my_id);
-                        self.try_start_cm(lr.my_id, lr.my_name, lr.avatar_image, false);
-
-                        let _ = tokio::time::timeout(
-                            Duration::from_secs_f64(60.0),
-                            self.send_login_error("2FA Not Authorized"),
-                        )
-                        .await;
-                    }
-
-                    #[cfg(any(target_os = "android", target_os = "ios"))]
-                    {
-                        self.try_start_cm(lr.my_id, lr.my_name, lr.avatar_image, true);
-                        self.send_logon_response().await;
-                        if self.port_forward_socket.is_some() {
-                            return false;
-                        }
+                        self.update_failure(failure, false, 1);
+                        self.send_login_error(crate::client::LOGIN_MSG_2FA_WRONG)
+                            .await;
                     }
                 }
             }
@@ -1841,13 +1803,15 @@ impl Connection {
                 msg_out.set_test_delay(t);
                 self.inner.send(msg_out.into());
             } else {
-                self.last_test_delay = 0;
-                let new_delay = (get_time() - t.time) as u32;
-                video_service::VIDEO_QOS
-                    .lock()
-                    .unwrap()
-                    .user_network_delay(self.inner.id(), new_delay);
-                self.network_delay = Some(new_delay);
+                if let Some(tm) = self.last_test_delay {
+                    self.last_test_delay = None;
+                    let new_delay = tm.elapsed().as_millis() as u32;
+                    video_service::VIDEO_QOS
+                        .lock()
+                        .unwrap()
+                        .user_network_delay(self.inner.id(), new_delay);
+                    self.network_delay = new_delay;
+                }
                 self.delay_response_instant = Instant::now();
             }
         } else if let Some(message::Union::SwitchSidesResponse(_s)) = msg.union {
@@ -2084,7 +2048,7 @@ impl Connection {
                                     Ok(mut job) => {
                                         self.send(fs::new_dir(id, path, job.files().to_vec()))
                                             .await;
-                                        let mut files = job.files().to_owned();
+                                        let mut _files = job.files().to_owned();
                                         job.is_remote = true;
                                         job.conn_id = self.inner.id();
                                         self.read_jobs.push(job);
@@ -2374,6 +2338,63 @@ impl Connection {
         true
     }
 
+    fn update_failure(&self, (mut failure, time): ((i32, i32, i32), i32), remove: bool, i: usize) {
+        if remove {
+            if failure.0 != 0 {
+                LOGIN_FAILURES[i].lock().unwrap().remove(&self.ip);
+            }
+            return;
+        }
+        if failure.0 == time {
+            failure.1 += 1;
+            failure.2 += 1;
+        } else {
+            failure.0 = time;
+            failure.1 = 1;
+            failure.2 += 1;
+        }
+        LOGIN_FAILURES[i]
+            .lock()
+            .unwrap()
+            .insert(self.ip.clone(), failure);
+    }
+
+    async fn check_failure(&mut self, i: usize) -> (((i32, i32, i32), i32), bool) {
+        let failure = LOGIN_FAILURES[i]
+            .lock()
+            .unwrap()
+            .get(&self.ip)
+            .map(|x| x.clone())
+            .unwrap_or((0, 0, 0));
+        let time = (get_time() / 60_000) as i32;
+        let res = if failure.2 > 30 {
+            self.send_login_error("Too many wrong attempts").await;
+            /*Self::post_alarm_audit(
+                AlarmAuditType::ExceedThirtyAttempts,
+                json!({
+                            "ip": self.ip,
+                            "id": self.lr.my_id.clone(),
+                            "name": self.lr.my_name.clone(),
+                }),
+            );*/
+            false
+        } else if time == failure.0 && failure.1 > 6 {
+            self.send_login_error("Please try 1 minute later").await;
+            /*Self::post_alarm_audit(
+                AlarmAuditType::SixAttemptsWithinOneMinute,
+                json!({
+                            "ip": self.ip,
+                            "id": self.lr.my_id.clone(),
+                            "name": self.lr.my_name.clone(),
+                }),
+            );*/
+            false
+        } else {
+            true
+        };
+        ((failure, time), res)
+    }
+    
     fn refresh_video_display(&self, display: Option<usize>) {
         video_service::refresh();
         self.server.upgrade().map(|s| {
@@ -2438,8 +2459,8 @@ impl Connection {
                 lock.add_service(Box::new(video_service::new(display_idx)));
             }
         }
-        if !crate::common::is_support_multi_ui_session(&self.lr.version) {
-            lock.subscribe(&old_service_name, self.inner.clone(), false);
+		if !crate::common::is_support_multi_ui_session(&self.lr.version) {
+			lock.subscribe(&old_service_name, self.inner.clone(), false);
         }
         lock.subscribe(&new_service_name, self.inner.clone(), true);
         self.display_idx = display_idx;
@@ -2663,7 +2684,7 @@ impl Connection {
                 .user_custom_fps(self.inner.id(), o.custom_fps as _);
         }
         if let Some(q) = o.supported_decoding.clone().take() {
-            scrap::codec::Encoder::update(self.inner.id(), scrap::codec::EncodingUpdate::New(q));
+            scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Update(self.inner.id(), q));
         }
         if let Ok(q) = o.lock_after_session_end.enum_value() {
             if q != BoolOption::NotSet {
@@ -3029,6 +3050,24 @@ impl Connection {
         self.auto_disconnect_timer
             .as_mut()
             .map(|t| t.0 = Instant::now());
+    }
+
+    #[cfg(feature = "gpucodec")]
+    fn update_supported_encoding(&mut self) {
+        let not_use = Some(scrap::gpucodec::GpuEncoder::not_use());
+        if !self.authorized
+            || self.supported_encoding_flag.0 && self.supported_encoding_flag.1 == not_use
+        {
+            return;
+        }
+        let mut misc: Misc = Misc::new();
+        let supported_encoding = scrap::codec::Encoder::supported_encoding();
+        log::info!("update supported encoding: {:?}", supported_encoding);
+        misc.set_supported_encoding(supported_encoding);
+        let mut msg = Message::new();
+        msg.set_misc(misc);
+        self.inner.send(msg.into());
+        self.supported_encoding_flag = (true, not_use);
     }
 }
 
@@ -3510,7 +3549,7 @@ mod raii {
     impl Drop for AuthedConnID {
         fn drop(&mut self) {
             if self.1 == AuthConnType::Remote {
-                scrap::codec::Encoder::update(self.0, scrap::codec::EncodingUpdate::Remove);
+                scrap::codec::Encoder::update(scrap::codec::EncodingUpdate::Remove(self.0));
             }
             AUTHED_CONNS.lock().unwrap().retain(|&c| c.0 != self.0);
             let remote_count = AUTHED_CONNS

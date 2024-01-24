@@ -274,6 +274,49 @@ pub fn core_main() -> Option<Vec<String>> {
 				std::process::exit(0);
             }
             return None;
+        } else if args[0] == "--update" {
+			let mut lastpath = "".to_string();
+			let exe_path = std::env::current_exe().expect("Failed to get current executable path");
+			#[cfg(windows)]
+			if fs::metadata(Config::path("UpdatePath.toml")).is_ok() {
+				lastpath = std::fs::read_to_string(Config::path("UpdatePath.toml")).unwrap_or_else(|err| {
+						log::error!(
+							"Error reading file: {:?}({})",
+							Config::path("UpdatePath.toml").to_str(),
+							err
+						);
+						String::new()
+					});
+
+				if crate::platform::is_installed() {
+					let (_subkey, mut path, _start_menu, _, _) = crate::platform::windows::get_install_info();
+					path.push_str("\\HopToDesk.exe");
+					let _ = crate::platform::windows::run_uac_hide("sc", "stop HopToDesk");
+					let _ = crate::platform::windows::run_uac_hide("taskkill", &format!("/F /IM {:?}.exe", &"HopToDesk"));
+					std::thread::sleep(std::time::Duration::from_secs(10));
+					let _ = fs::remove_file(path.clone());
+					let _ = fs::copy(&exe_path, &path);
+					std::thread::sleep(std::time::Duration::from_secs(1));
+					let _ = crate::platform::windows::run_uac_hide("sc", "start HopToDesk");
+				}			
+
+				if let Err(err) = crate::platform::windows::run_uac_hide("taskkill", &format!("/F /IM {:?}.exe", &"HopToDesk")) {
+					
+				} else {
+					let _ = fs::remove_file(lastpath.clone());
+					let _ = fs::copy(&exe_path, &lastpath.clone());
+				}
+
+				if crate::platform::is_installed() {
+					let _ = crate::platform::windows::run_uac_hide("sc", "start HopToDesk");
+				}
+
+				use std::process::Command;
+				std::thread::sleep(std::time::Duration::from_secs(5));
+				let status = Command::new(lastpath.clone()).status().expect("Failed to execute command");
+			}
+
+            std::process::exit(0);
         } else if args[0] == "--install-service" {
             log::info!("start --install-service");
             crate::platform::install_service();

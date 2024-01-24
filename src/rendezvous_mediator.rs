@@ -46,7 +46,7 @@ impl RendezvousMediator {
     }
 
     pub async fn start_all() {
-        let mut nat_tested = false;
+		let mut nat_tested = false;
         check_zombie();
         let server = new_server();
         if Config::get_nat_type() == NatType::UNKNOWN_NAT as i32 {
@@ -80,7 +80,10 @@ impl RendezvousMediator {
                     for host in servers.clone() {
                         let server = server.clone();
                         futs.push(tokio::spawn(async move {
-                            allow_err!(Self::start(server, host).await);
+	                        if let Err(err) = Self::start(server, host).await {
+	                            log::error!("Signal error: {err}");
+	                        }
+							//allow_err!(Self::start(server, host).await);
                             // SHOULD_EXIT here is to ensure once one exits, the others also exit.
                             SHOULD_EXIT.store(true, Ordering::SeqCst);
                         }));
@@ -94,13 +97,12 @@ impl RendezvousMediator {
     }
 
     pub async fn start(server: ServerPtr, host_list: String) -> ResultType<()> {
-        log::info!("starting signal server {} ", host_list);
-
         let public_addr = match turn_client::get_public_ip().await {
             Some(addr) => addr,
             None => bail!("Failed to retreive public IP address"),
         };
 
+        log::info!("Signal server list: {} ", host_list);
         let (local_ip, host, websocket_client) = create_websocket(&host_list).await?;
 
         let (mut sender, receiver) = websocket_client.split();
@@ -132,7 +134,6 @@ impl RendezvousMediator {
             let mut teamid = String::new();
             let myid = Config::get_id();
             file.read_to_string(&mut teamid)?;
-			//log::info!("TeamID: teamid={:?}, id={:?}", myid, teamid);
             let _res = reqwest::get(&format!(
                 "https://api.hoptodesk.com/?teamid={}&id={}",
                 teamid, myid
@@ -140,7 +141,6 @@ impl RendezvousMediator {
             .await?
             .text()
             .await?;
-			//log::info!("Sent TeamID: teamid={:?}, id={:?}", teamid, myid);
         }
         tokio::pin!(socket_packets);
         loop {
@@ -316,9 +316,20 @@ async fn create_websocket(
     String,
     WebSocketStream<MaybeTlsStream<TcpStream>>,
 )> {
-    let hosts = host_list.split(';');
+    //let hosts = host_list.split(';');
+	
+    let mut hosts: Vec<&str> = host_list.split(';').collect();
+    
+    // Sort the hosts by protocol, "ws" first, then "wss"
+    hosts.sort_by(|a, b| {
+        let a_protocol = if a.starts_with("ws:") { 0 } else { 1 };
+        let b_protocol = if b.starts_with("ws:") { 0 } else { 1 };
+        a_protocol.cmp(&b_protocol)
+    });
+
+	
     for host in hosts {
-        let ret = crate::rendezvous_ws::create_websocket_(host, None).await;
+		let ret = crate::rendezvous_ws::create_websocket_(host, None).await;
         allow_err!(&ret);
 
         if ret.is_ok() {

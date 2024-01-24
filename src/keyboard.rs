@@ -12,7 +12,7 @@ use hbb_common::message_proto::*;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use rdev::KeyCode;
 use rdev::{Event, EventType, Key};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::HashMap,
@@ -28,6 +28,8 @@ const OS_LOWER_WINDOWS: &str = "windows";
 const OS_LOWER_LINUX: &str = "linux";
 #[allow(dead_code)]
 const OS_LOWER_MACOS: &str = "macos";
+#[allow(dead_code)]
+const OS_LOWER_ANDROID: &str = "android";
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 static KEYBOARD_HOOKED: AtomicBool = AtomicBool::new(false);
@@ -228,6 +230,7 @@ static mut IS_0X021D_DOWN: bool = false;
 #[cfg(target_os = "macos")]
 static mut IS_LEFT_OPTION_DOWN: bool = false;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn get_keyboard_mode() -> String {
     #[cfg(not(any(feature = "flutter", feature = "cli")))]
     if let Some(session) = CUR_SESSION.lock().unwrap().as_ref() {
@@ -326,6 +329,16 @@ pub fn start_grab_loop() {
     }) {
         log::error!("Failed to init rdev grab thread: {:?}", err);
     };
+}
+
+// #[allow(dead_code)] is ok here. No need to stop grabbing loop.
+#[allow(dead_code)]
+fn stop_grab_loop() -> Result<(), rdev::GrabError> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    rdev::exit_grab()?;
+    #[cfg(target_os = "linux")]
+    rdev::exit_grab_listen();
+    Ok(())
 }
 
 pub fn is_long_press(event: &Event) -> bool {
@@ -902,7 +915,7 @@ pub fn map_keyboard_mode(_peer: &str, event: &Event, mut key_event: KeyEvent) ->
     Some(key_event)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(not(any(target_os = "ios")))]
 fn try_fill_unicode(_peer: &str, event: &Event, key_event: &KeyEvent, events: &mut Vec<KeyEvent>) {
     match &event.unicode {
         Some(unicode_info) => {

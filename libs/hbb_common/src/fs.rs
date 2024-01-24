@@ -620,7 +620,7 @@ impl TransferJob {
     }
 
     pub fn confirm(&mut self, r: &FileTransferSendConfirmRequest) -> bool {
-        if self.file_num() != r.file_num {
+		if self.file_num() != r.file_num {
             log::info!("file num truncated, ignoring");
         } else {
             match r.union {

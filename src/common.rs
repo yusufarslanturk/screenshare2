@@ -127,14 +127,14 @@ use hbb_common::compress::decompress;
 use hbb_common::{
     allow_err,
     compress::compress as compress_func,
-    config::{Config, RENDEZVOUS_TIMEOUT},
-    log,
+    config::{Config, RENDEZVOUS_TIMEOUT}, log,
     message_proto::*,
     protobuf::Enum,
 //    protobuf::Message as _,
 //    rendezvous_proto::*,
-    tcp::FramedStream,
-    socket_client, tokio, ResultType,
+//    tcp::FramedStream,
+    socket_client, 
+    tokio, ResultType,
 };
 //#[cfg(any(target_os = "android", target_os = "ios", feature = "cli"))]
 use hbb_common::{config::RENDEZVOUS_PORT, futures::future::join_all};
@@ -161,7 +161,7 @@ pub const PLATFORM_LINUX: &str = "Linux";
 pub const PLATFORM_MACOS: &str = "Mac OS";
 pub const PLATFORM_ANDROID: &str = "Android";
 
-const MIN_VER_MULTI_UI_SESSION: &str = "1.40.8";
+const MIN_VER_MULTI_UI_SESSION: &str = "1.41.5";
 pub mod input {
     pub const MOUSE_TYPE_MOVE: i32 = 0;
     pub const MOUSE_TYPE_DOWN: i32 = 1;
@@ -1120,7 +1120,10 @@ pub fn make_privacy_mode_msg_with_details(
 }
 
 #[inline]
-pub fn make_privacy_mode_msg(state: back_notification::PrivacyModeState, impl_key: String) -> Message {
+pub fn make_privacy_mode_msg(
+    state: back_notification::PrivacyModeState,
+    impl_key: String,
+) -> Message {
     make_privacy_mode_msg_with_details(state, "".to_owned(), impl_key)
 }
 
@@ -1209,7 +1212,7 @@ pub async fn get_key(sync: bool) -> String {
         let mut options = crate::ipc::get_options_async().await;
         options.remove("key").unwrap_or_default()
     };
-    if key.is_empty() && !option_env!("RENDEZVOUS_SERVER").unwrap_or("").is_empty() {
+    if key.is_empty() {
         key = config::RS_PUB_KEY.to_owned();
     }
     key

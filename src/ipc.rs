@@ -157,11 +157,6 @@ pub enum DataPortableService {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "t", content = "c")]
 pub enum Data {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    TFA {
-        id: i32,
-        answer: crate::two_factor_auth::sockets::AuthAnswer,
-    },
     Login {
         id: i32,
         is_file_transfer: bool,

@@ -128,7 +128,7 @@ impl Recorder {
     fn change(&mut self, mut ctx: RecorderContext) -> ResultType<()> {
         ctx.set_filename()?;
         self.inner = match ctx.format {
-            CodecFormat::VP8 | CodecFormat::VP9  => {
+            CodecFormat::VP8 | CodecFormat::VP9 => {
                 Box::new(WebmRecorder::new(ctx.clone())?)
             }
             #[cfg(feature = "hwcodec")]

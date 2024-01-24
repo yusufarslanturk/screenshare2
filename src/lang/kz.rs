@@ -297,8 +297,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("The peer has exited from Privacy Mode.", "Пирдің шығуы"),
         ("Failed to turn off", "Сөндіру сәтсіз болды"),
         ("Turned off", "Өшірілген"),
-        ("In privacy mode", "Құпиялылық модасында"),
-        ("Out privacy mode", "Құпиялылық модасынан Шығу"),
         ("Language", "Тіл"),
         ("Keep HopToDesk background service", "Артжақтағы HopToDesk сербесін сақтап тұру"),
         ("Ignore Battery Optimizations", "Бәтері Оңтайландыруларын Елемеу"),

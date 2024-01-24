@@ -2,9 +2,10 @@
 use hbb_common::password_security;
 use hbb_common::{
     allow_err,
-    //bytes::Bytes,
     config::{self, Config, LocalConfig, PeerConfig},
-    directories_next, log, tokio,
+    directories_next, 
+    log, 
+    tokio,
 };
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::{
@@ -149,6 +150,14 @@ pub fn get_license() -> String {
     Default::default()
 }
 */
+
+#[inline]
+pub fn refresh_options() {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        *OPTIONS.lock().unwrap() = Config::get_options();
+    }
+}
 
 #[inline]
 pub fn get_option<T: AsRef<str>>(key: T) -> String {
@@ -738,12 +747,13 @@ pub fn get_uuid() -> String {
     crate::encode64(hbb_common::get_uuid())
 }
 
+#[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
 pub fn get_init_async_job_status() -> String {
     INIT_ASYNC_JOB_STATUS.to_string()
 }
 
-//#[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
+#[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 #[inline]
 pub fn reset_async_job_status() {
     *ASYNC_JOB_STATUS.lock().unwrap() = get_init_async_job_status();
@@ -887,12 +897,11 @@ pub fn default_video_save_directory() -> String {
 #[inline]
 pub fn get_api_server() -> String {
     crate::get_api_server(
-        get_option_("api-server"),
-        get_option_("custom-rendezvous-server"),
+        get_option("api-server"),
+        get_option("custom-rendezvous-server"),
     )
 }
-*/
-#[cfg(any(target_os = "android", target_os = "ios"))]
+
 #[inline]
 pub fn has_hwcodec() -> bool {
     #[cfg(not(any(feature = "hwcodec", feature = "mediacodec")))]
@@ -900,12 +909,31 @@ pub fn has_hwcodec() -> bool {
     #[cfg(any(feature = "hwcodec", feature = "mediacodec"))]
     return true;
 }
+*/
+
+#[inline]
+pub fn has_gpucodec() -> bool {
+    cfg!(feature = "gpucodec")
+}
 
 #[cfg(feature = "flutter")]
 #[inline]
 pub fn supported_hwdecodings() -> (bool, bool) {
-    let decoding = scrap::codec::Decoder::supported_decodings(None);
-    (decoding.ability_h264 > 0, decoding.ability_h265 > 0)
+    let decoding = scrap::codec::Decoder::supported_decodings(None, true, None);
+    #[allow(unused_mut)]
+    let (mut h264, mut h265) = (decoding.ability_h264 > 0, decoding.ability_h265 > 0);
+    #[cfg(feature = "gpucodec")]
+    {
+        // supported_decodings check runtime luid
+        let gpu = scrap::gpucodec::GpuDecoder::possible_available_without_check();
+        if gpu.0 {
+            h264 = true;
+        }
+        if gpu.1 {
+            h265 = true;
+        }
+    }
+    (h264, h265)
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -931,11 +959,11 @@ pub fn check_super_user_permission() -> bool {
     return true;
 }
 
-#[allow(dead_code)]
-pub fn check_zombie(children: Children) {
+#[cfg(not(any(target_os = "android", target_os = "ios", feature = "flutter")))]
+pub fn check_zombie() {
     let mut deads = Vec::new();
     loop {
-        let mut lock = children.lock().unwrap();
+        let mut lock = CHILDREN.lock().unwrap();
         let mut n = 0;
         for (id, c) in lock.1.iter_mut() {
             if let Ok(Some(_)) = c.try_wait() {
@@ -1177,14 +1205,15 @@ pub(crate) async fn send_close_to_cm() {
 //const UNKNOWN_ERROR: &'static str = "Unknown error";
 
 #[inline]
+#[cfg(target_os = "android")]
 #[tokio::main(flavor = "current_thread")]
 pub async fn change_id_shared(id: String, old_id: String) -> String {
-    log::info!("Change ID Shared...");
     let res = change_id_shared_(id, old_id).await.to_owned();
     *ASYNC_JOB_STATUS.lock().unwrap() = res.clone();
     res
 }
 
+#[cfg(target_os = "android")]
 pub async fn change_id_shared_(id: String, _old_id: String) -> &'static str {
     hbb_common::api::erase_api().await;
     Config::set_id(&id);
@@ -1321,3 +1350,21 @@ pub fn support_remove_wallpaper() -> bool {
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     return false;
 }
+
+pub fn has_valid_2fa() -> bool {
+    let raw = get_option("2fa");
+    crate::auth_2fa::get_2fa(Some(raw)).is_some()
+}
+
+pub fn generate2fa() -> String {
+    crate::auth_2fa::generate2fa()
+}
+
+pub fn verify2fa(code: String) -> bool {
+    let res = crate::auth_2fa::verify2fa(code);
+    if res {
+        refresh_options();
+    }
+    res
+}
+

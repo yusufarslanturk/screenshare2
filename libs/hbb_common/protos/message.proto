@@ -84,6 +84,10 @@ message LoginRequest {
   string tokenex = 14;
 }
 
+message Auth2FA {
+  string code = 1;
+}
+
 message ChatMessage { string text = 1; }
 
 message Features {
@@ -718,6 +722,7 @@ message Misc {
     int32 refresh_video_display = 31;
     ToggleVirtualDisplay toggle_virtual_display = 32;
     TogglePrivacyMode toggle_privacy_mode = 33;
+    SupportedEncoding supported_encoding = 34;
   }
 }
 
@@ -759,5 +764,6 @@ message Message {
     VoiceCallResponse voice_call_response = 24;
     PeerInfo peer_info = 25;
     PointerDeviceEvent pointer_device_event = 26;
+    Auth2FA auth_2fa = 27;
   }
 }

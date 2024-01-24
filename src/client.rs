@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::c_void,
     net::SocketAddr,
     ops::Deref,
     str::FromStr,
@@ -7,7 +8,6 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-pub use async_trait::async_trait;
 use bytes::Bytes;
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 use cpal::{
@@ -25,6 +25,7 @@ use tokio_tungstenite::{tungstenite::Message as WsMessage, MaybeTlsStream, WebSo
 use uuid::Uuid;
 
 pub use file_trait::FileManager;
+
 #[cfg(not(feature = "flutter"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::UnboundedSender;
@@ -32,14 +33,17 @@ use hbb_common::{
     allow_err,
     anyhow::{anyhow, Context},
     bail,
-    config::{Config, PeerConfig, PeerInfoSerde, Resolution, CONNECT_TIMEOUT, RENDEZVOUS_TIMEOUT},
-    get_version_number,
-    log,
+    config::{
+    	Config, LocalConfig, PeerConfig, PeerInfoSerde, Resolution, CONNECT_TIMEOUT,
+    	RENDEZVOUS_TIMEOUT,
+    },
+    get_version_number, log,
     message_proto::{option_message::BoolOption, *},
     protobuf::Message as _,
     rand,
     rendezvous_proto::*,
     socket_client,
+    sodiumoxide::base64,
     sodiumoxide::crypto::{box_, secretbox, sign},
     tcp::FramedStream,
     timeout,
@@ -92,6 +96,8 @@ pub const LOGIN_MSG_DESKTOP_SESSION_NOT_READY_PASSWORD_WRONG: &str =
     "Desktop session not ready, password wrong";
 pub const LOGIN_MSG_PASSWORD_EMPTY: &str = "Empty Password";
 pub const LOGIN_MSG_PASSWORD_WRONG: &str = "Wrong Password";
+pub const LOGIN_MSG_2FA_WRONG: &str = "Wrong 2FA Code";
+pub const REQUIRE_2FA: &'static str = "2FA Required";
 pub const LOGIN_MSG_NO_PASSWORD_ACCESS: &str = "No Password Access";
 pub const LOGIN_MSG_OFFLINE: &str = "Offline";
 #[cfg(target_os = "linux")]
@@ -162,7 +168,7 @@ pub fn get_key_state(key: enigo::Key) -> bool {
 cfg_if::cfg_if! {
     if #[cfg(target_os = "android")] {
 
-use hbb_common::libc::{c_float, c_int, c_void};
+use hbb_common::libc::{c_float, c_int};
 use std::cell::RefCell;
 type Oboe = *mut c_void;
 extern "C" {
@@ -651,11 +657,7 @@ impl Client {
                                 });
                                 timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
                                 conn.set_key(key);
-                                security_numbers =
-                                    hbb_common::password_security::compute_security_code(
-                                        &out_sk_b,
-                                        &their_pk_b,
-                                    );
+                                security_numbers = hbb_common::password_security::compute_security_code(&out_sk_b, &their_pk_b,);
                                 log::info!("Connection is secured: {}, and Security Code is: {}", conn.is_secured(), security_numbers);
                             } else {
                                 log::error!("Handshake failed: sign failure");
@@ -1016,6 +1018,7 @@ impl AudioHandler {
 pub struct VideoHandler {
     decoder: Decoder,
     pub rgb: ImageRgb,
+    pub texture: *mut c_void,
     recorder: Arc<Mutex<Option<Recorder>>>,
     record: bool,
     _display: usize, // useful for debug
@@ -1024,10 +1027,16 @@ pub struct VideoHandler {
 impl VideoHandler {
     /// Create a new video handler.
     pub fn new(_display: usize) -> Self {
+        #[cfg(all(feature = "gpucodec", feature = "flutter"))]
+        let luid = crate::flutter::get_adapter_luid();
+        #[cfg(not(all(feature = "gpucodec", feature = "flutter")))]
+        let luid = Default::default();
+        println!("new session_get_adapter_luid: {:?}", luid);
         log::info!("new video handler for display #{_display}");
         VideoHandler {
-            decoder: Decoder::new(),
+            decoder: Decoder::new(luid),
             rgb: ImageRgb::new(ImageFormat::ARGB, crate::DST_STRIDE_RGBA),
+            texture: std::ptr::null_mut(),
             recorder: Default::default(),
             record: false,
             _display,
@@ -1039,13 +1048,18 @@ impl VideoHandler {
     pub fn handle_frame(
         &mut self,
         vf: VideoFrame,
+        pixelbuffer: &mut bool,
         chroma: &mut Option<Chroma>,
     ) -> ResultType<bool> {
         match &vf.union {
             Some(frame) => {
-                let res = self
-                    .decoder
-                    .handle_video_frame(frame, &mut self.rgb, chroma);
+                let res = self.decoder.handle_video_frame(
+                    frame,
+                    &mut self.rgb,
+                    &mut self.texture,
+                    pixelbuffer,
+                    chroma,
+                );
                 if self.record {
                     self.recorder
                         .lock()
@@ -1061,7 +1075,11 @@ impl VideoHandler {
 
     /// Reset the decoder.
     pub fn reset(&mut self) {
-        self.decoder = Decoder::new();
+        #[cfg(all(feature = "flutter", feature = "gpucodec"))]
+        let luid = crate::flutter::get_adapter_luid();
+        #[cfg(not(all(feature = "flutter", feature = "gpucodec")))]
+        let luid = None;
+        self.decoder = Decoder::new(luid);
     }
 
     /// Start or stop screen record.
@@ -1110,6 +1128,7 @@ pub struct LoginConfigHandler {
     pub save_ab_password_to_recent: bool, // true: connected with ab password
     pub other_server: Option<(String, String, String)>,
     pub custom_fps: Arc<Mutex<Option<usize>>>,
+    pub adapter_luid: Option<i64>,
 }
 
 impl Deref for LoginConfigHandler {
@@ -1120,11 +1139,6 @@ impl Deref for LoginConfigHandler {
     }
 }
 
-/// Load [`PeerConfig`] from id.
-///
-/// # Arguments
-///
-/// * `id` - id of peer
 #[inline]
 pub fn load_config(id: &str) -> PeerConfig {
     PeerConfig::load(id)
@@ -1143,6 +1157,7 @@ impl LoginConfigHandler {
         conn_type: ConnType,
         switch_uuid: Option<String>,
         force_relay: bool,
+        adapter_luid: Option<i64>,
         tokenex: String,
     ) {
 /*
@@ -1198,9 +1213,16 @@ impl LoginConfigHandler {
         self.supported_encoding = Default::default();
         self.restarting_remote_device = false;
         self.force_relay = !self.get_option("force-always-relay").is_empty() || force_relay;
+        /*if let Some((real_id, server, key)) = &self.other_server {
+            let other_server_key = self.get_option("other-server-key");
+            if !other_server_key.is_empty() && key.is_empty() {
+                self.other_server = Some((real_id.to_owned(), server.to_owned(), other_server_key));
+            }
+        }*/
         self.direct = None;
         self.received = false;
         self.switch_uuid = switch_uuid;
+        self.adapter_luid = adapter_luid;        
     }
     /*
         // XXX: fix conflicts between with config that introduces by Deref.
@@ -1540,7 +1562,11 @@ impl LoginConfigHandler {
             n += 1;
         }
         msg.supported_decoding =
-            hbb_common::protobuf::MessageField::some(Decoder::supported_decodings(Some(&self.id)));
+            hbb_common::protobuf::MessageField::some(Decoder::supported_decodings(
+                Some(&self.id),
+                cfg!(feature = "flutter"),
+                self.adapter_luid,
+            ));
         n += 1;
 
         if n > 0 {
@@ -1748,39 +1774,6 @@ impl LoginConfigHandler {
         self.save_config(config);
     }
 
-    pub fn handle_login_error(&mut self, err: &str, interface: &impl Interface) -> bool {
-        if err == "Wrong Password" {
-            self.password = Default::default();
-            interface.msgbox("re-input-password", err, "Do you want to enter again?", "");
-            true
-        } else if err == "2FA Not Authorized" {
-            self.password = Default::default();
-            interface.msgbox(
-                "re-input-password-2fa",
-                "Login Error",
-                err,
-                "Do you want to enter again and accept 2fa?",
-            );
-            true
-        } else if err == "No Password Access" {
-            self.password = Default::default();
-            interface.msgbox(
-                "wait-remote-accept-nook",
-                "Prompt",
-                "Please wait for the remote side to accept your session request...",
-                "",
-            );
-            true
-        } else {
-            if err.contains(SCRAP_X11_REQUIRED) {
-                interface.msgbox("error", "Login Error", err, SCRAP_X11_REF_URL);
-            } else {
-                interface.msgbox("error", "Login Error", err, "");
-            }
-            false
-        }
-    }
-
     /// Get user name.
     /// Return the name of the given peer. If the peer has no name, return the name in the config.
     ///
@@ -1909,7 +1902,8 @@ impl LoginConfigHandler {
             my_name: crate::username(),
             option: self.get_option_message(true).into(),
             session_id: self.session_id,
-            version: crate::VERSION.to_string(),
+            //version: crate::VERSION.to_string(),
+			version: "1.40.7".to_string(),
             os_login: Some(OSLogin {
                 username: os_username,
                 password: os_password,
@@ -1938,8 +1932,12 @@ impl LoginConfigHandler {
         msg_out
     }
 
-    pub fn change_prefer_codec(&self) -> Message {
-        let decoding = scrap::codec::Decoder::supported_decodings(Some(&self.id));
+    pub fn update_supported_decodings(&self) -> Message {
+        let decoding = scrap::codec::Decoder::supported_decodings(
+            Some(&self.id),
+            cfg!(feature = "flutter"),
+            self.adapter_luid,
+        );
         let mut misc = Misc::new();
         misc.set_option(OptionMessage {
             supported_decoding: hbb_common::protobuf::MessageField::some(decoding),
@@ -1950,6 +1948,44 @@ impl LoginConfigHandler {
         msg_out
     }
 
+    fn real_supported_decodings(
+        &self,
+        handler_controller_map: &Vec<VideoHandlerController>,
+    ) -> Data {
+        let abilities: Vec<CodecAbility> = handler_controller_map
+            .iter()
+            .map(|h| h.handler.decoder.exist_codecs(cfg!(feature = "flutter")))
+            .collect();
+        let all = |ability: fn(&CodecAbility) -> bool| -> i32 {
+            if abilities.iter().all(|d| ability(d)) {
+                1
+            } else {
+                0
+            }
+        };
+        let decoding = scrap::codec::Decoder::supported_decodings(
+            Some(&self.id),
+            cfg!(feature = "flutter"),
+            self.adapter_luid,
+        );
+        let decoding = SupportedDecoding {
+            ability_vp8: all(|e| e.vp8),
+            ability_vp9: all(|e| e.vp9),
+            //ability_av1: all(|e| e.av1),
+            ability_h264: all(|e| e.h264),
+            ability_h265: all(|e| e.h265),
+            ..decoding
+        };
+        let mut misc = Misc::new();
+        misc.set_option(OptionMessage {
+            supported_decoding: hbb_common::protobuf::MessageField::some(decoding),
+            ..Default::default()
+        });
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        Data::Message(msg_out)
+    }
+    
     pub fn restart_remote_device(&self) -> Message {
         let mut misc = Misc::new();
         misc.set_restart_remote_device(true);
@@ -1957,22 +1993,6 @@ impl LoginConfigHandler {
         msg_out.set_misc(misc);
         msg_out
     }
-    /*
-
-    pub fn set_force_relay(&mut self, direct: bool, received: bool, err: String) {
-        self.force_relay = false;
-        if direct && !received {
-            let errno = errno::errno().0;
-            // TODO: check mac and ios
-            if cfg!(windows) && (errno == 10054 || err.contains("10054"))
-                || !cfg!(windows) && (errno == 104 || err.contains("104"))
-            {
-                self.force_relay = true;
-                self.set_option("force-always-relay".to_owned(), "Y".to_owned());
-            }
-        }
-    }
-    */
 }
 
 /// Media data.
@@ -2011,7 +2031,7 @@ pub fn start_video_audio_threads<F, T>(
     Arc<RwLock<Option<Chroma>>>,
 )
 where
-    F: 'static + FnMut(usize, &mut scrap::ImageRgb) + Send,
+    F: 'static + FnMut(usize, &mut scrap::ImageRgb, *mut c_void, bool) + Send,
     T: InvokeUiSession,
 {
     let (video_sender, video_receiver) = mpsc::channel::<MediaData>();
@@ -2057,6 +2077,7 @@ where
                         };
                         let display = vf.display as usize;
                         let start = std::time::Instant::now();
+                        let mut created_new_handler = false;
                         if handler_controller_map.len() <= display {
                             for _i in handler_controller_map.len()..=display {
                                 handler_controller_map.push(VideoHandlerController {
@@ -2065,13 +2086,33 @@ where
                                     duration: std::time::Duration::ZERO,
                                     skip_beginning: 0,
                                 });
+                                created_new_handler = true;
                             }
                         }
+                        if created_new_handler {
+                            session.send(
+                                session
+                                    .lc
+                                    .read()
+                                    .unwrap()
+                                    .real_supported_decodings(&handler_controller_map),
+                            );
+                        }
                         if let Some(handler_controller) = handler_controller_map.get_mut(display) {
+                            let mut pixelbuffer = true;
                             let mut tmp_chroma = None;
-                            match handler_controller.handler.handle_frame(vf, &mut tmp_chroma) {
+                            match handler_controller.handler.handle_frame(
+                                vf,
+                                &mut pixelbuffer,
+                                &mut tmp_chroma,
+                            ) {
                                 Ok(true) => {
-                                    video_callback(display, &mut handler_controller.handler.rgb);
+                                    video_callback(
+                                        display,
+                                        &mut handler_controller.handler.rgb,
+                                        handler_controller.handler.texture,
+                                        pixelbuffer,
+                                    );
 
                                     // chroma
                                     if tmp_chroma.is_some() && last_chroma != tmp_chroma {
@@ -2124,6 +2165,13 @@ where
                     MediaData::Reset(display) => {
                         if let Some(handler_controler) = handler_controller_map.get_mut(display) {
                             handler_controler.handler.reset();
+                            session.send(
+                                session
+                                    .lc
+                                    .read()
+                                    .unwrap()
+                                    .real_supported_decodings(&handler_controller_map),
+                            );
                         }
                     }
                     MediaData::RecordScreen(start, display, w, h, id) => {
@@ -2497,6 +2545,9 @@ pub fn handle_login_error(
         lc.write().unwrap().password = Default::default();
         interface.msgbox("re-input-password", err, "Do you want to enter again?", "");
         true
+    } else if err == LOGIN_MSG_2FA_WRONG || err == REQUIRE_2FA {
+        interface.msgbox("input-2fa", err, "", "");
+        true
     } else if LOGIN_ERROR_MAP.contains_key(err) {
         if let Some(msgbox_info) = LOGIN_ERROR_MAP.get(err) {
             interface.msgbox(
@@ -2558,6 +2609,27 @@ pub async fn handle_hash(
     if password.is_empty() {
         password = lc.read().unwrap().config.password.clone();
     }
+    //xxx
+    if password.is_empty() {
+        let access_token = LocalConfig::get_option("access_token");
+        let ab = hbb_common::config::Ab::load();
+        if !access_token.is_empty() && access_token == ab.access_token {
+            let id = lc.read().unwrap().id.clone();
+            if let Some(p) = ab
+                .peers
+                .iter()
+                .find_map(|p| if p.id == id { Some(p) } else { None })
+            {
+                if let Ok(hash) = base64::decode(p.hash.clone(), base64::Variant::Original) {
+                    if !hash.is_empty() {
+                        password = hash;
+                        lc.write().unwrap().save_ab_password_to_recent = true;
+                    }
+                }
+            }
+        }
+    }
+    lc.write().unwrap().password = password.clone();
     let password = if password.is_empty() {
         // login without password, the remote side can click accept
         interface.msgbox("input-password", "Password Required", "", "");
@@ -2662,7 +2734,6 @@ async fn send_switch_login_request(
 }
 
 /// Interface for client to send data and commands.
-#[async_trait]
 pub trait Interface: Send + Clone + 'static + Sized {
     /// Send message data to remote peer.
     fn send(&self, data: Data);
@@ -2672,7 +2743,8 @@ pub trait Interface: Send + Clone + 'static + Sized {
     fn on_error(&self, err: &str) {
         self.msgbox("error", "Error", err, "");
     }
-    async fn handle_hash(&self, pass: &str, hash: Hash, peer: &mut Stream);
+    //async fn handle_hash(&self, pass: &str, hash: Hash, peer: &mut Stream);
+	fn handle_hash(&self, pass: &str, hash: Hash, peer: &mut Stream) -> impl std::future::Future<Output = ()> + Send;
     async fn handle_login_from_ui(
         &self,
         os_username: String,
@@ -2923,16 +2995,6 @@ fn get_pk(pk: &[u8]) -> Option<[u8; 32]> {
         None
     }
 }
-/*
-#[inline]
-fn get_rs_pk(str_base64: &str) -> Option<sign::PublicKey> {
-    if let Ok(pk) = crate::decode64(str_base64) {
-        get_pk(&pk).map(|x| sign::PublicKey(x))
-    } else {
-        None
-    }
-}
-*/
 
 fn decode_id_pk(signed: &[u8], key: &sign::PublicKey) -> ResultType<(String, [u8; 32])> {
     let res = IdPk::parse_from_bytes(

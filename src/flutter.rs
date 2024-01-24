@@ -877,11 +877,16 @@ pub fn session_add(
         Some(switch_uuid.to_string())
     };
 
+    #[cfg(feature = "gpucodec")]
+    let adapter_luid = get_adapter_luid();
+    #[cfg(not(feature = "gpucodec"))]
+    let adapter_luid = None;
+	
     session
         .lc
         .write()
         .unwrap()
-        .initialize(id.to_owned(), conn_type, switch_uuid, force_relay, tokenexp.to_string());
+        .initialize(id.to_owned(), conn_type, switch_uuid, force_relay, adapter_luid, tokenexp.to_string());
     let session = Arc::new(session.clone());
     sessions::insert_session(session_id.to_owned(), conn_type, session.clone());
 

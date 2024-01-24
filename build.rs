@@ -85,13 +85,6 @@ fn install_android_deps() {
 fn main() {
     hbb_common::gen_version();
     install_android_deps();
-    // there is problem with cfg(target_os) in build.rs, so use our workaround
-    // let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-    // if target_os == "android" || target_os == "ios" {
-    //#[cfg(feature = "flutter")]
-    //gen_flutter_rust_bridge();
-    //     return;
-    // }
 
     #[cfg(all(feature = "packui", ))]
     {

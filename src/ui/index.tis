@@ -13,6 +13,7 @@ var show_settings_button = handler.get_config_option("show-settings-button") == 
 var software_update_url = "";
 var key_confirmed = tmp[1];
 var system_error = "";
+var showingupdate = "";
 
 var svg_menu = <svg #menu title={translate('Menu')} tabindex="0" viewBox="0 0 512 512">
 	<circle cx="256" cy="256" r="64"/>
@@ -20,6 +21,7 @@ var svg_menu = <svg #menu title={translate('Menu')} tabindex="0" viewBox="0 0 51
 	<circle cx="256" cy="64" r="64"/>
 </svg>;
 var svg_refresh_password = <svg #refresh-password tabindex="0" title={translate('Refresh Password')} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2v6h6M2.66 15.57a10 10 0 1 0 .57-8.38"/></svg>;
+var svg_alert = <svg width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 1.67c.955 0 1.845 .467 2.39 1.247l.105 .16l8.114 13.548a2.914 2.914 0 0 1 -2.307 4.363l-.195 .008h-16.225a2.914 2.914 0 0 1 -2.582 -4.2l.099 -.185l8.11 -13.538a2.914 2.914 0 0 1 2.491 -1.403zm.01 13.33l-.127 .007a1 1 0 0 0 0 1.986l.117 .007l.127 -.007a1 1 0 0 0 0 -1.986l-.117 -.007zm-.01 -7a1 1 0 0 0 -.993 .883l-.007 .117v4l.007 .117a1 1 0 0 0 1.986 0l.007 -.117v-4l-.007 -.117a1 1 0 0 0 -.993 -.883z" stroke-width="0" fill="currentColor" /></svg>;
 
 var my_id = "";
 function get_id() {
@@ -207,12 +209,10 @@ class Enhancements: Reactor.Component {
     }
 
     function render() {
-        var has_hwcodec = handler.has_hwcodec();
         var me = this;
         self.timer(1ms, function() { me.toggleMenuState() });
         return <li>{translate('Enhancements')}
             <menu #enhancements-menu>
-                {has_hwcodec ? <li #enable-hwcodec><span>{svg_checkmark}</span>{translate("Hardware Codec")} (beta)</li> : ""}
                 <li #enable-abr><span>{svg_checkmark}</span>{translate("Adaptive Bitrate")} (beta)</li>
                 <li #screen-recording>{translate("Recording")}</li>
                 {support_remove_wallpaper ? <li #allow-remove-wallpaper><span>{svg_checkmark}</span>{translate("Remove wallpaper during incoming sessions")}</li> : ""}
@@ -310,9 +310,8 @@ class MyIdMenu: Reactor.Component {
                 <li #socks5-server title={translate('SOCKS5 Proxy')}>{translate('SOCKS5 Proxy')}</li>
                 <div .separator />
 				<li #enable-wol title={translate('Enable Wake On LAN')}><span>{svg_checkmark}</span>{translate("Enable Wake On LAN")}</li>
-				<li #-enable-2fa title={translate('Enable 2FA')} style="behavior: enable-2fa-button" class={!handler.is_2fa_enabled() ? "line-through" : "selected"}><span>{svg_checkmark}</span>{translate("Enable 2FA")}</li>
-                <li #enable-2fa-auto-accept title={translate('Enable 2FA Auto Accept')} class={(handler.get_config_option("enable-2fa-auto-accept") == "N" ? "line-through" : "selected") + " " + (handler.is_2fa_enabled() ? "tfa-enabled" : "tfa-disabled")}><span>{svg_checkmark}</span>{translate('Enable 2FA Auto Accept')}</li>
                 <li #stop-service title={translate('Enable Service')} class={service_stopped ? "line-through" : "selected"}><span>{svg_checkmark}</span>{translate("Enable Service")}</li>
+                <li #tfa title={translate('enable-2fa-title')} class={!handler.has_valid_2fa() ? "line-through" : "selected"}><span>{svg_checkmark}</span>{translate('enable-2fa-title')}</li>
                 <DirectServer />
 				<li #show-settings-button style="display:none">{show_settings_button ? translate("Hide Settings Button") : translate("Show Settings Button")}</li>
                 <div .separator />
@@ -327,6 +326,13 @@ class MyIdMenu: Reactor.Component {
         this.showSettingMenu();
     }
 
+
+
+
+
+
+    
+    
 	event keypress $(svg#menu) (evt)
 	{
 		var scanCode = evt.keyCode;
@@ -379,6 +385,40 @@ class MyIdMenu: Reactor.Component {
         }
     }
 
+    function showGen2FA() {
+
+        var me = this;
+        var has_valid_2fa = handler.has_valid_2fa();
+        if (has_valid_2fa) {
+            handler.set_option('2fa', '');
+            me.update();
+        } else {
+            var new2fa = handler.generate2fa();
+            var src = handler.generate_2fa_img_src(new2fa);
+            msgbox("custom-2fa-setting", translate('enter-2fa-title'),
+                <div .form>
+                    <div>{translate('enable-2fa-desc')}</div>
+                    <center><img title='QR' style='height:160px; width:160px' src={src} /></center>
+					<div>{translate('enable-2fa-desc-verify')}</div>
+                    <center><div .code><input name='code' type='text' maxlength='6' style='width:150px; font-family: \"Courier New\"' .outline-focus /></div></center>
+					<div #wrongalert style='float:left; display:none; margin-right: 10px'>{svg_alert}</div><div #wrongcode style='font-size: 11px; font-weight: 300; display:none; '>{translate('wrong-2fa-code')}</div>
+                </div>
+                , "", function(res=null) {
+                if (!res) return;
+                if (!res.code) return;
+                if (!handler.verify2fa(res.code)) {
+					var el = $(#wrongcode);
+					el.style.set{display: "block"};
+					var elalert = $(#wrongalert);
+					elalert.style.set{display: "block"};					
+					return <div></div>;
+                }
+                me.update();
+            }, 470);
+        }
+        
+    }
+    
     function showAbout() {
         var name = handler.get_app_name();
             msgbox("custom-nocancel-nook-hasclose", translate('About') + " " + name, "<div style='line-height: 2em'> \
@@ -400,6 +440,55 @@ class MyIdMenu: Reactor.Component {
                 };
             }, 400);
     }
+	
+    function showUpdatePopup() {
+			let dontshowbox;
+			showingupdate = "1";
+			dontshowbox = ".checkboxunchecked";
+			
+            msgbox("custom-nocancel-nook-hasyes-hasno", translate('Update Available'), " \
+			<center><svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 500 500' version='1.1'><path d='M 245.110 155.396 C 240.061 158.194, 240.073 158.055, 240.035 210.489 C 240 259.477, 240 259.477, 223.750 243.376 C 214.813 234.520, 206.387 226.538, 205.027 225.637 C 201.480 223.288, 197.611 223.615, 194.111 226.560 C 189.994 230.024, 189.125 234.855, 191.835 239.213 C 192.959 241.021, 205.529 254.088, 219.770 268.250 C 245.643 293.983, 245.664 294, 250 294 C 254.336 294, 254.357 293.983, 280.230 268.250 C 294.471 254.088, 307.041 241.021, 308.165 239.213 C 310.875 234.855, 310.006 230.024, 305.889 226.560 C 302.389 223.615, 298.520 223.288, 294.973 225.637 C 293.613 226.538, 285.188 234.520, 276.250 243.376 C 260 259.477, 260 259.477, 260 210.786 C 260 175.165, 259.679 161.390, 258.805 159.472 C 256.616 154.666, 249.986 152.693, 245.110 155.396 M 163.329 287.471 C 159.858 290.942, 159.858 290.942, 160.179 306.298 C 160.489 321.111, 160.607 321.864, 163.518 327.549 C 165.564 331.545, 168.140 334.658, 171.518 337.218 C 180.864 344.299, 178.112 344.073, 251.572 343.771 C 317.500 343.500, 317.500 343.500, 322.484 341.047 C 329.324 337.682, 335.444 331.103, 337.939 324.433 C 339.661 319.830, 340 316.615, 340 304.862 C 340 290.800, 340 290.800, 336.600 287.400 C 332.220 283.020, 328.296 282.871, 323.766 286.915 C 320.500 289.829, 320.500 289.829, 320 303.894 C 319.227 325.644, 326.893 323.500, 249.895 323.500 C 185.836 323.500, 185.836 323.500, 182.918 320.234 C 180.009 316.979, 180 316.928, 180 303.884 C 180 290.800, 180 290.800, 176.600 287.400 C 171.962 282.762, 168.017 282.783, 163.329 287.471' stroke='none' fill='#fbfbfc' fill-rule='evenodd'/><path d='M 231 41.508 C 214.372 45.563, 198.875 55.787, 163.502 86.041 C 154.151 94.039, 135.925 109.383, 123 120.140 C 87.615 149.590, 73.550 164.194, 64.128 181.272 C 48.452 209.683, 48.679 248.787, 64.794 296 C 79.796 339.955, 101.438 374.993, 129.572 400.873 C 159.582 428.480, 196.679 444.080, 232.500 444.158 C 263.964 444.226, 288.488 434.355, 335.864 402.552 C 395.603 362.451, 411.631 349.864, 428.146 330.080 C 447.857 306.468, 455.853 282.928, 454.670 252 C 454.052 235.869, 452.113 226.019, 447.088 213.500 C 437.050 188.489, 424.093 175.172, 376.004 140.441 C 352.185 123.238, 344.463 116.565, 315.993 88.576 C 301.964 74.784, 286.702 60.479, 282.077 56.786 C 263.580 42.020, 248.005 37.361, 231 41.508 M 245.110 155.396 C 240.061 158.194, 240.073 158.055, 240.035 210.489 C 240 259.477, 240 259.477, 223.750 243.376 C 214.813 234.520, 206.387 226.538, 205.027 225.637 C 201.480 223.288, 197.611 223.615, 194.111 226.560 C 189.994 230.024, 189.125 234.855, 191.835 239.213 C 192.959 241.021, 205.529 254.088, 219.770 268.250 C 245.643 293.983, 245.664 294, 250 294 C 254.336 294, 254.357 293.983, 280.230 268.250 C 294.471 254.088, 307.041 241.021, 308.165 239.213 C 310.875 234.855, 310.006 230.024, 305.889 226.560 C 302.389 223.615, 298.520 223.288, 294.973 225.637 C 293.613 226.538, 285.188 234.520, 276.250 243.376 C 260 259.477, 260 259.477, 260 210.786 C 260 175.165, 259.679 161.390, 258.805 159.472 C 256.616 154.666, 249.986 152.693, 245.110 155.396 M 163.329 287.471 C 159.858 290.942, 159.858 290.942, 160.179 306.298 C 160.489 321.111, 160.607 321.864, 163.518 327.549 C 165.564 331.545, 168.140 334.658, 171.518 337.218 C 180.864 344.299, 178.112 344.073, 251.572 343.771 C 317.500 343.500, 317.500 343.500, 322.484 341.047 C 329.324 337.682, 335.444 331.103, 337.939 324.433 C 339.661 319.830, 340 316.615, 340 304.862 C 340 290.800, 340 290.800, 336.600 287.400 C 332.220 283.020, 328.296 282.871, 323.766 286.915 C 320.500 289.829, 320.500 289.829, 320 303.894 C 319.227 325.644, 326.893 323.500, 249.895 323.500 C 185.836 323.500, 185.836 323.500, 182.918 320.234 C 180.009 316.979, 180 316.928, 180 303.884 C 180 290.800, 180 290.800, 176.600 287.400 C 171.962 282.762, 168.017 282.783, 163.329 287.471' stroke='none' fill='#bce4fc' fill-rule='evenodd'/></svg></center><br></br> \
+			<span style=\"margin-top: 5px; margin-bottom: 15px;\">" + translate("An update is available, do you want to update to the new version?") + "</span><br></br> \
+				<div style=\"margin-top: 30px; display: flex; align-items: center; \"> \
+					<div id='dontshowagain' .custom-event style=\"float:left; width: 20px; height: 20px; border: 4px solid #2196F3; border-radius: 8px; cursor: pointer;\"> \
+						<div id='dontshowagainchecked'></div> \
+					</div> \
+					<div style=\"height:32px; vertical-align: middle; \"><div style=\"margin-left: 40px; display:block; \">" + translate("Don't show this again.") + "</div></div> \
+				</div> \
+			<br></br> \
+			", "", function(el) {
+				if (el) {
+					if (el.type === "custom-nocancel-nook-hasyes-hasno"){
+						if ($(#dontshowagainchecked).attributes.hasClass("checkboxunchecked")) {
+							showingupdate = "";
+						}
+										
+						view.windowState = View.WINDOW_MINIMIZED;
+						handler.run_temp_update();
+						
+						if ($(#dontshowagainchecked).attributes.hasClass("checkboxchecked")) {
+							showingupdate = "";
+						}				
+						
+						return;						
+					}
+					if (el.id === 'dontshowagain') {
+						if ($(#dontshowagain).attributes.hasClass("checkedtrue")) {
+							$(#dontshowagain).attributes.removeClass("checkedtrue");
+							$(#dontshowagain).html = '';
+							handler.set_local_option("dontshowagain", "");
+						} else {
+							$(#dontshowagain).html = '<div id="dontshowagainchecked" style="margin-top: -7px; margin-left: 2px;  font-weight: 900; font-size: 25px; color: #2196F3; cursor: pointer; ">&#10003;</div>';
+							$(#dontshowagain).attributes.addClass("checkedtrue");
+							handler.set_local_option("dontshowagain", "1");
+						}
+					}
+                } {
+					showingupdate = "";
+				}
+				
+            }, 240);
+    }	
 
     event click $(menu#config-options>li) (_, me) {
         if (me.id && me.id.indexOf("enable-") == 0) {
@@ -408,22 +497,7 @@ class MyIdMenu: Reactor.Component {
         if (me.id && me.id.indexOf("allow-") == 0) {
             handler.set_option(me.id, handler.get_option(me.id) == "Y" ? "" : "Y");
         }
-        if (me.id == "-enable-2fa") {
-            var enabled = !(me.is_2fa_enabled());
-            if (enabled) {
-                var data = me.enable_2fa();
-				msgbox("custom nocancel", translate("2FA QR code"), "<center>" + translate("Scan this QR code with a camera on a secondary device such as a phone to set it up as your 2FA authenticator.") + "<br/>" + data.img_base64 + "<br/>" + translate("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.") + "</center>");
-
-            } else {
-                me.disable_2fa();
-            }
-            me.attributes.toggleClass("selected", enabled);
-            me.attributes.toggleClass("line-through", !enabled);
-
-            var aa = $(menu#config-options>li#enable-2fa-auto-accept);
-            aa.attributes.toggleClass("tfa-disabled", !enabled);
-            aa.attributes.toggleClass("tfa-enabled", enabled);
-        } else if (me.id == "whitelist") {
+        if (me.id == "whitelist") {
             var old_value = handler.get_option("whitelist").split(",").join("\n");
             msgbox("custom-whitelist", translate("IP Whitelisting"), "<div .form> \
             <div>" + translate("whitelist_sep") + "</div> \
@@ -548,6 +622,8 @@ class MyIdMenu: Reactor.Component {
             handler.set_option("stop-service", service_stopped ? "" : "Y");
         } else if (me.id == "allow-darktheme") {
             updateTheme();
+        } else if (me.id == "tfa") {
+            this.showGen2FA()
         } else if (me.id == "about") {
             this.showAbout()
         } else if (me.id == "enable-wol") {
@@ -700,7 +776,7 @@ class EmptyMe: Reactor.Component {
 }
 
 function download(from, to, args..) {
-    var rqp = { type:#get, url: from, toFile: to };
+    var rqp = { type:#get, url: from, toFile: to, noCache: true };
     var fn = 0;
     var on = 0;
     for( var p in args ) {
@@ -995,6 +1071,8 @@ class PasswordArea: Reactor.Component {
             { !show_password ? '' : <div .separator /> }
             { !show_password ? '' : <li #set-password  disabled={ method == 'use-temporary-password' ? "true" : "false" }>{translate('Set permanent password')}</li> }
             { !show_password ? '' : <TemporaryPasswordLengthMenu /> }
+            <div .separator />
+            <li #tfa><span>{svg_checkmark}</span>{translate('enable-2fa-title')}</li>
         </menu></popup>;
     }
 
@@ -1010,14 +1088,23 @@ class PasswordArea: Reactor.Component {
         var pwd_id = handler.get_option('verification-method');
         if (pwd_id != 'use-temporary-password' && pwd_id != 'use-permanent-password')
             pwd_id = 'use-both-passwords';
+        var has_valid_2fa = handler.has_valid_2fa();
         for (var el in this.$$(menu#edit-password-context>li)) {
             if (el.id.indexOf("approve-mode-") == 0)
                 el.attributes.toggleClass("selected", el.id == mode_id);
             if (el.id.indexOf("use-") == 0)
                 el.attributes.toggleClass("selected", el.id == pwd_id);
+            if (el.id == "tfa")
+                el.attributes.toggleClass("selected", has_valid_2fa);
         }
     }
 
+
+
+
+      
+        
+        
     event click $(svg#edit) (_, me) {
         var approve_mode= handler.get_option('approve-mode');
         var show_password = approve_mode != 'click';
@@ -1062,6 +1149,18 @@ class PasswordArea: Reactor.Component {
         });
     }
 
+    event click $(#unattendedcheckbox) (_, me) {
+        var v = me.id;
+		if (me.state.checked) {
+			handler.set_option("unattended-access", "true");
+			$(#unattendedlabel).style.set{color: "#222222"};
+		} else {
+			handler.set_option("unattended-access", "");
+			$(#unattendedlabel).style.set{color: "#666"};
+		}
+    }
+    
+    
     event click $(menu#edit-password-context>li) (_, me) {
         if (me.id.indexOf('use-') == 0) {
             handler.set_option('verification-method', me.id);
@@ -1080,17 +1179,8 @@ class PasswordArea: Reactor.Component {
             passwordArea.update();
         }
     }
-	
-    event click $(#unattendedcheckbox) (_, me) {
-        var v = me.id;
-		if (me.state.checked) {
-			handler.set_option("unattended-access", "true");
-			$(#unattendedlabel).style.set{color: "#222222"};
-		} else {
-			handler.set_option("unattended-access", "");
-			$(#unattendedlabel).style.set{color: "#666"};
-		}
-    }	
+
+    
 }
 
 var password_cache = ["","","",""];
@@ -1219,6 +1309,10 @@ function self.ready() {
 	
 }
 
+function showGen2FA() {
+    myIdMenu.showGen2FA();
+}
+
 function showAbout() {
     myIdMenu.showAbout();
 }
@@ -1229,19 +1323,28 @@ function showSettings() {
 }
 
 if (handler.requires_update()) {
-	var el = $(#launch-update);
-	el.style.set{display: "inline-block"};
+	//var el = $(#launch-update);
+	//el.style.set{display: "inline-block"};
+}
+
+function showUpdatePopup() {
+    myIdMenu.showUpdatePopup();
 }
 
 //hophere update
 function updateCheck() {
-	self.timer(3600s, function() {
+	if (showingupdate === "1") {return;}
+	if (handler.get_local_option("dontshowagain") === "1") {return;}
+	
+	if (handler.requires_update()) {
+		showUpdatePopup();
+	}
+	
+	//check for update every 12 hours
+	self.timer(43200s, function() {
 		handler.set_version_sync();
-		var el = $(#launch-update);
 		if (handler.requires_update()) {
-			el.style.set{display: "inline-block"};
-		} else {
-			el.style.set{display: "none"};
+			showUpdatePopup();
 		}
 		updateCheck();
     });		

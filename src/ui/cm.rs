@@ -1,5 +1,3 @@
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::two_factor_auth::{TFAManager, sockets::AuthAnswer};
 #[cfg(target_os = "linux")]
 use crate::ipc::start_pa;
 use crate::ui_cm_interface::{start_ipc, ConnectionManager, InvokeUiCM};
@@ -45,10 +43,6 @@ impl InvokeUiCM for SciterHandler {
         }
     }
 
-    fn update_2fa_answer(&self, answer: AuthAnswer) {
-        log::info!("update_2fa_answer rs");
-        self.call("on_2fa_answer", &make_args!(answer.to_string()))
-    }
     fn new_message(&self, id: i32, text: String) {
         self.call("newMessage", &make_args!(id, text));
     }
@@ -146,38 +140,6 @@ impl SciterConnectionManager {
         crate::client::translate(name)
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn is_2fa_enabled(&self) -> bool {
-        crate::two_factor_auth::utils::is_2fa_enabled()
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn get_2fa_answer(&self, id: Value) -> String {
-        let id = id.to_string();
-        futures::executor::block_on(async move {
-            match TFAManager::get_answer(&id).await {
-                None => "".to_string(),
-                Some(answer) => answer.to_string(),
-            }
-        })
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn add_2fa_callback(&self, id: Value, cb: Value) {
-        let id = id.to_string();
-        futures::executor::block_on(async move {
-            TFAManager::add_callback(
-                &id,
-                Box::new(move |answer| {
-                    if let Err(e) = cb.call(None, &[Value::from(answer.to_string())], None) {
-                        log::warn!("Error calling callback: {e}");
-                    }
-                }),
-            )
-            .await;
-        });
-    }
-
     fn can_elevate(&self) -> bool {
         crate::ui_cm_interface::can_elevate()
     }
@@ -210,8 +172,5 @@ impl sciter::EventHandler for SciterConnectionManager {
         fn can_elevate();
         fn elevate_portable(i32);
         fn get_option(String);
-        fn is_2fa_enabled();
-        fn get_2fa_answer(Value);
-        fn add_2fa_callback(Value, Value);
     }
 }
