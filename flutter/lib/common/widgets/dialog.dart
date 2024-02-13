@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_hbb/common/shared_state.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:get/get.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../common.dart';
 import '../../models/model.dart';
@@ -360,6 +362,8 @@ class DialogTextField extends StatelessWidget {
   final Widget? suffixIcon;
   final TextEditingController controller;
   final FocusNode? focusNode;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
 
   static const kUsernameTitle = 'Username';
   static const kUsernameIcon = Icon(Icons.account_circle_outlined);
@@ -375,6 +379,8 @@ class DialogTextField extends StatelessWidget {
       this.prefixIcon,
       this.suffixIcon,
       this.hintText,
+      this.keyboardType,
+      this.inputFormatters,
       required this.title,
       required this.controller})
       : super(key: key);
@@ -399,6 +405,8 @@ class DialogTextField extends StatelessWidget {
             focusNode: focusNode,
             autofocus: true,
             obscureText: obscureText,
+            keyboardType: keyboardType,
+            inputFormatters: inputFormatters,
           ),
         ),
       ],
@@ -652,12 +660,14 @@ class PasswordWidget extends StatefulWidget {
     Key? key,
     required this.controller,
     this.autoFocus = true,
+    this.reRequestFocus = false,
     this.hintText,
     this.errorText,
   }) : super(key: key);
 
   final TextEditingController controller;
   final bool autoFocus;
+  final bool reRequestFocus;
   final String? hintText;
   final String? errorText;
 
@@ -669,6 +679,7 @@ class _PasswordWidgetState extends State<PasswordWidget> {
   bool _passwordVisible = false;
   final _focusNode = FocusNode();
   Timer? _timer;
+  Timer? _timerReRequestFocus;
 
   @override
   void initState() {
@@ -677,16 +688,28 @@ class _PasswordWidgetState extends State<PasswordWidget> {
       _timer =
           Timer(Duration(milliseconds: 50), () => _focusNode.requestFocus());
     }
+    // software secure keyboard will take the focus since flutter 3.13
+    // request focus again when android account password obtain focus
+    if (Platform.isAndroid && widget.reRequestFocus) {
+      _focusNode.addListener(() {
+        if (_focusNode.hasFocus) {
+          _timerReRequestFocus?.cancel();
+          _timerReRequestFocus = Timer(
+              Duration(milliseconds: 100), () => _focusNode.requestFocus());
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _timerReRequestFocus?.cancel();
     _focusNode.unfocus();
     _focusNode.dispose();
     super.dispose();
   }
-
+  
   @override
   Widget build(BuildContext context) {
     return DialogTextField(

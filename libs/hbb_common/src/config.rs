@@ -563,7 +563,8 @@ impl Config {
     }
 
     pub fn is_empty(&self) -> bool {
-        (self.id.is_empty() && self.enc_id.is_empty()) || self.key_pair.0.is_empty()
+        self.key_pair.0.is_empty() && self.salt.is_empty()
+		//(self.id.is_empty() && self.enc_id.is_empty() && self.salt.is_empty()) || self.key_pair.0.is_empty()
     }
 
     pub fn get_home() -> PathBuf {

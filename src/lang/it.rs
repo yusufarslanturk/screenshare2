@@ -595,6 +595,14 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
 		("Enable Wake On LAN", "Abilita Wake On LAN"),
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Dovrai confermare con te la 2FA sul dispositivo secondario quando tenti di connetterti a questo desktop."),		
         ("Choose Network", "Scegli Rete"),		
-		("Unattended Access", "Accesso non Presidiato"),				
+		("Unattended Access", "Accesso non Presidiato"),
+		("Enter your custom network settings URL:", "Inserisci l'URL delle tue impostazioni di rete personalizzate:"),
+		("HopToDesk Network (Default)", "Rete HopToDesk (predefinita)"),
+		("Custom Network Settings", "Impostazioni di Rete Personalizzate"),
+		("Custom Network Error", "Errore di Rete Personalizzata"),
+		("The custom network URL provided was not valid, please try again.", "L'URL della rete personalizzata fornito non era valido, riprova."),								
+		("Your Security Code", "Il tuo codice di sicurezza"),
+		("ID (Click to Copy)", "ID (clicca per copiare)"),		
+		("Password (Click to Copy)", "Password (clicca per copiare)"),
     ].iter().cloned().collect();
 }

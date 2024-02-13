@@ -158,7 +158,9 @@ class _PeerCardState extends State<_PeerCard>
         Expanded(
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white,
+		      color: Theme.of(context).brightness == Brightness.dark
+		          ? Theme.of(context).colorScheme.background
+		          : Colors.white,
               borderRadius: BorderRadius.only(
                 topRight: Radius.circular(_tileRadius),
                 bottomRight: Radius.circular(_tileRadius),

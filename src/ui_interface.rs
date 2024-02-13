@@ -1205,7 +1205,7 @@ pub(crate) async fn send_close_to_cm() {
 //const UNKNOWN_ERROR: &'static str = "Unknown error";
 
 #[inline]
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 #[tokio::main(flavor = "current_thread")]
 pub async fn change_id_shared(id: String, old_id: String) -> String {
     let res = change_id_shared_(id, old_id).await.to_owned();
@@ -1213,7 +1213,7 @@ pub async fn change_id_shared(id: String, old_id: String) -> String {
     res
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn change_id_shared_(id: String, _old_id: String) -> &'static str {
     hbb_common::api::erase_api().await;
     Config::set_id(&id);

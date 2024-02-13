@@ -676,33 +676,37 @@ impl UI {
     fn run_temp_update(&self) {
 		#[cfg(windows)]
 		{
-			let exe_path = env::current_exe().expect("Failed to get current executable path").to_string_lossy().to_string();
-			std::fs::write(&Config::path("UpdatePath.toml"), exe_path.clone()).expect("Failed to write update path");
-
-			let mut tempexepath = std::env::temp_dir();
-			tempexepath.push("HopToDesk-update.exe");
-			log::info!("Saving update to: {:?}", tempexepath);
-			let random_value = rand::random::<u64>().to_string();
-			let url = format!("https://www.hoptodesk.com/update-windows?update={}", random_value);
-			let rt = Runtime::new().unwrap();
-			rt.block_on(async {
-				log::info!("Downloading update...");
-				let response = reqwest::get(url).await.expect("Error downloading update");
-				let bytes = response.bytes().await.expect("Error reading token response");
-				let _ = std::fs::remove_file(tempexepath.clone());
-				let _ = std::fs::write(tempexepath.clone(), bytes);
-				log::info!("Update saved.");
-			});
-		
-			log::info!("Running update: {:?}", tempexepath.clone());
-			let runuac = tempexepath.clone();
-			if let Err(err) = crate::platform::windows::run_uac_hide(runuac.to_str().expect("Failed to convert executable path to string"), "--update") {
-				log::info!("UAC Run Error: {:?}", err);
-			} else {
-				log::info!("UAC Run success");
-			}
-		
-			std::process::exit(0);
+			//use std::fs;
+			//let local_api_json = Config::path("api.json");
+			//if fs::metadata(&local_api_json).is_err() {
+				let exe_path = env::current_exe().expect("Failed to get current executable path").to_string_lossy().to_string();
+				std::fs::write(&Config::path("UpdatePath.toml"), exe_path.clone()).expect("Failed to write update path");
+	
+				let mut tempexepath = std::env::temp_dir();
+				tempexepath.push("HopToDesk-update.exe");
+				log::info!("Saving update to: {:?}", tempexepath);
+				let random_value = rand::random::<u64>().to_string();
+				let url = format!("https://www.hoptodesk.com/update-windows?update={}", random_value);
+				let rt = Runtime::new().unwrap();
+				rt.block_on(async {
+					log::info!("Downloading update...");
+					let response = reqwest::get(url).await.expect("Error downloading update");
+					let bytes = response.bytes().await.expect("Error reading token response");
+					let _ = std::fs::remove_file(tempexepath.clone());
+					let _ = std::fs::write(tempexepath.clone(), bytes);
+					log::info!("Update saved.");
+				});
+			
+				log::info!("Running update: {:?}", tempexepath.clone());
+				let runuac = tempexepath.clone();
+				if let Err(err) = crate::platform::windows::run_uac_hide(runuac.to_str().expect("Failed to convert executable path to string"), "--update") {
+					log::info!("UAC Run Error: {:?}", err);
+				} else {
+					log::info!("UAC Run success");
+				}
+			
+				std::process::exit(0);
+			//}
 		}
     }
 	
@@ -719,7 +723,7 @@ impl UI {
 		String::from("none")
     }
 
-	#[cfg(target_os = "android")]
+	#[cfg(any(target_os = "android", target_os = "ios"))]
     fn change_id(&self, id: String) {
 		reset_async_job_status();
         let old_id = self.get_id();
@@ -932,28 +936,6 @@ impl sciter::host::HostHandler for UIHostHandler {
         log::error!("Critical rendering error: e.g. DirectX gfx driver error. Most probably bad gfx drivers.");
     }
 }
-
-/*pub fn check_zombie(children: Children) {
-    let mut deads = Vec::new();
-    loop {
-        let mut lock = children.lock().unwrap();
-        let mut n = 0;
-        for (id, c) in lock.1.iter_mut() {
-            if let Ok(Some(_)) = c.try_wait() {
-                deads.push(id.clone());
-                n += 1;
-            }
-        }
-        for ref id in deads.drain(..) {
-            lock.1.remove(id);
-        }
-        if n > 0 {
-            lock.0 = true;
-        }
-        drop(lock);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}*/
 
 use serde::Deserialize;
 #[derive(Deserialize)]

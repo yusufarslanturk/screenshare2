@@ -214,12 +214,10 @@ impl PrivacyModeImpl {
 		let mut program_path = PathBuf::from(&start_in_directory).join(program_name);
 		
 		if !program_path.exists() {
-			log::info!("NOT Found {:?}", program_path);
 			program_path = PathBuf::from(&env::temp_dir().to_string_lossy().to_string()).join(program_name);
 		} 
 		
 		if !program_path.exists() {
-			log::info!("NOT Found 2 {:?}", program_path);
 			program_path = PathBuf::from(&exe_file.parent().unwrap().to_string_lossy().to_string()).join(program_name);
 		}
 		
@@ -242,6 +240,8 @@ impl PrivacyModeImpl {
 			}
 		}
 
+		log::info!("Starting {:?} in {:?}", program_path, start_in_directory);
+		
 		let output = Command::new(&program_path)
 			.current_dir(&start_in_directory)
 			.spawn();
@@ -250,7 +250,7 @@ impl PrivacyModeImpl {
 			Ok(mut child) => {
 				let exit_status = child.wait().expect("Failed to wait for child process");
 				if exit_status.success() {
-					//log::info!("Privacy Helper executed successfully.");
+					log::info!("Privacy Helper ran successfully.");
 				} else {
 					log::info!("Privacy Helper failed with exit code: {:?}", exit_status.code());
 				}

@@ -591,7 +591,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("You will need to confirm the 2FA on the secondary device with you when trying to connect to this desktop.", "Sie müssen die 2FA auf dem sekundären Gerät mit Ihnen bestätigen, wenn Sie versuchen, sich mit diesem Desktop zu verbinden."),		
 		("Choose Network", "Wählen Sie Netzwerk"),
 		("Enter your custom network settings URL:", "Entrez URL de paramètres réseau personnalisés:"),
-		("HopToDesk Network (Default)", "Hoftodesk -Netzwerk (Standard)"),
+		("HopToDesk Network (Default)", "HopToDesk-Netzwerk (Standard)"),
 		("Custom Network Settings", "Benutzerdefinierte Netzwerkeinstellungen"),
 		("Custom Network Error", "Benutzerdefinierte Netzwerkfehler"),
 		("The custom network URL provided was not valid, please try again.", "Die bereitgestellte benutzerdefinierte Netzwerk -URL war nicht gültig. Bitte versuchen Sie es erneut."),								
