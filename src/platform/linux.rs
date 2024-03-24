@@ -939,6 +939,7 @@ mod desktop {
         pub protocal: String,
         pub display: String,
         pub xauth: String,
+        pub home: String,
         pub is_rustdesk_subprocess: bool,
         pub wl_display: String,
     }
@@ -965,7 +966,7 @@ mod desktop {
                     XWAYLAND,
                     IBUS_DAEMON,
                     GNOME_GOA_DAEMON,
-                    PLASMA_KDED5,
+                    PLASMA_KDED,
                     RUSTDESK_TRAY,
                 ];
                 for proc in display_proc {
@@ -986,7 +987,7 @@ mod desktop {
                     XWAYLAND,
                     IBUS_DAEMON,
                     GNOME_GOA_DAEMON,
-                    PLASMA_KDED5,
+                    PLASMA_KDED,
                     XFCE4_PANEL,
                     SDDM_GREETER,
                 ];
@@ -1069,7 +1070,7 @@ mod desktop {
                     XWAYLAND,
                     IBUS_DAEMON,
                     GNOME_GOA_DAEMON,
-                    PLASMA_KDED5,
+                    PLASMA_KDED,
                     XFCE4_PANEL,
                     SDDM_GREETER,
                     RUSTDESK_TRAY,

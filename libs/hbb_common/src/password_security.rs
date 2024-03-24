@@ -221,15 +221,12 @@ mod test {
     #[test]
     fn test() {
         use super::*;
-        use rand::{thread_rng, Rng};
-        use std::time::Instant;
 
         let version = "00";
-        let max_len = 128;
 
         println!("test str");
-        let data = "1ü1111";
-        let encrypted = encrypt_str_or_original(data, version, max_len);
+        let data = "Hello World";
+        let encrypted = encrypt_str_or_original(data, version);
         let (decrypted, succ, store) = decrypt_str_or_original(&encrypted, version);
         println!("data: {data}");
         println!("encrypted: {encrypted}");
@@ -241,14 +238,11 @@ mod test {
         let (_, _, store) = decrypt_str_or_original(&encrypted, "99");
         assert!(store);
         assert!(!decrypt_str_or_original(&decrypted, version).1);
-        assert_eq!(
-            encrypt_str_or_original(&encrypted, version, max_len),
-            encrypted
-        );
+        assert_eq!(encrypt_str_or_original(&encrypted, version), encrypted);
 
         println!("test vec");
-        let data: Vec<u8> = "1ü1111".as_bytes().to_vec();
-        let encrypted = encrypt_vec_or_original(&data, version, max_len);
+        let data: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
+        let encrypted = encrypt_vec_or_original(&data, version);
         let (decrypted, succ, store) = decrypt_vec_or_original(&encrypted, version);
         println!("data: {data:?}");
         println!("encrypted: {encrypted:?}");
@@ -260,10 +254,7 @@ mod test {
         let (_, _, store) = decrypt_vec_or_original(&encrypted, "99");
         assert!(store);
         assert!(!decrypt_vec_or_original(&decrypted, version).1);
-        assert_eq!(
-            encrypt_vec_or_original(&encrypted, version, max_len),
-            encrypted
-        );
+        assert_eq!(encrypt_vec_or_original(&encrypted, version), encrypted);
 
         println!("test original");
         let data = version.to_string() + "Hello World";
@@ -283,44 +274,6 @@ mod test {
         let (_, succ, store) = decrypt_vec_or_original(&[], version);
         assert!(!store);
         assert!(!succ);
-        let data = "1ü1111";
-        assert_eq!(decrypt_str_or_original(data, version).0, data);
-        let data: Vec<u8> = "1ü1111".as_bytes().to_vec();
-        assert_eq!(decrypt_vec_or_original(&data, version).0, data);
-
-        println!("test speed");
-        let test_speed = |len: usize, name: &str| {
-            let mut data: Vec<u8> = vec![];
-            let mut rng = thread_rng();
-            for _ in 0..len {
-                data.push(rng.gen_range(0..255));
-            }
-            let start: Instant = Instant::now();
-            let encrypted = encrypt_vec_or_original(&data, version, len);
-            assert_ne!(data, decrypted);
-            let t1 = start.elapsed();
-            let start = Instant::now();
-            let (decrypted, _, _) = decrypt_vec_or_original(&encrypted, version);
-            let t2 = start.elapsed();
-            assert_eq!(data, decrypted);
-            println!("{name}");
-            println!("encrypt:{:?}, decrypt:{:?}", t1, t2);
-
-            let start: Instant = Instant::now();
-            let encrypted = base64::encode(&data, base64::Variant::Original);
-            let t1 = start.elapsed();
-            let start = Instant::now();
-            let decrypted = base64::decode(&encrypted, base64::Variant::Original).unwrap();
-            let t2 = start.elapsed();
-            assert_eq!(data, decrypted);
-            println!("base64, encrypt:{:?}, decrypt:{:?}", t1, t2,);
-        };
-        test_speed(128, "128");
-        test_speed(1024, "1k");
-        test_speed(1024 * 1024, "1M");
-        test_speed(10 * 1024 * 1024, "10M");
-        test_speed(100 * 1024 * 1024, "100M");
     }
 }
-
 
