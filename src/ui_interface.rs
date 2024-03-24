@@ -182,6 +182,16 @@ pub fn get_local_option(key: String) -> String {
 }
 
 #[inline]
+pub fn get_hard_option(key: String) -> String {
+    config::HARD_SETTINGS
+        .read()
+        .unwrap()
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[inline]
 pub fn set_local_option(key: String, value: String) {
     LocalConfig::set_option(key, value);
 }
@@ -441,14 +451,6 @@ pub fn is_installed() -> bool {
 #[inline]
 pub fn is_installed() -> bool {
     false
-}
-
-#[inline]
-pub fn is_rdp_service_open() -> bool {
-    #[cfg(windows)]
-    return is_installed() && crate::platform::windows::is_rdp_service_open();
-    #[cfg(not(windows))]
-    return false;
 }
 
 #[inline]
@@ -901,7 +903,7 @@ pub fn get_api_server() -> String {
         get_option("custom-rendezvous-server"),
     )
 }
-
+*/
 #[inline]
 pub fn has_hwcodec() -> bool {
     #[cfg(not(any(feature = "hwcodec", feature = "mediacodec")))]
@@ -909,7 +911,6 @@ pub fn has_hwcodec() -> bool {
     #[cfg(any(feature = "hwcodec", feature = "mediacodec"))]
     return true;
 }
-*/
 
 #[inline]
 pub fn has_gpucodec() -> bool {

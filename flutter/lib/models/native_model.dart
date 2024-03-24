@@ -15,7 +15,7 @@ import 'package:path_provider/path_provider.dart';
 import '../common.dart';
 import '../generated_bridge.dart';
 
-class RgbaFrame extends Struct {
+final class RgbaFrame extends Struct {
   @Uint32()
   external int len;
   external Pointer<Uint8> data;
@@ -99,9 +99,14 @@ class PlatformFFI {
 
   int getRgbaSize(SessionID sessionId, int display) =>
       _ffiBind.sessionGetRgbaSize(sessionId: sessionId, display: display);
-  void nextRgba(SessionID sessionId, int display) => _ffiBind.sessionNextRgba(sessionId: sessionId, display: display);
-  void registerTexture(SessionID sessionId, int display, int ptr) =>
-      _ffiBind.sessionRegisterTexture(sessionId: sessionId, display: display, ptr: ptr);
+  void nextRgba(SessionID sessionId, int display) =>
+      _ffiBind.sessionNextRgba(sessionId: sessionId, display: display);
+  void registerPixelbufferTexture(SessionID sessionId, int display, int ptr) =>
+      _ffiBind.sessionRegisterPixelbufferTexture(
+          sessionId: sessionId, display: display, ptr: ptr);
+  void registerGpuTexture(SessionID sessionId, int display, int ptr) =>
+      _ffiBind.sessionRegisterGpuTexture(
+          sessionId: sessionId, display: display, ptr: ptr);
 
   /// Init the FFI class, loads the native Rust core library.
   Future<void> init(String appType) async {
@@ -235,7 +240,6 @@ class PlatformFFI {
     });
   }
   
-
   void setEventCallback(StreamEventHandler fun) async {
     _eventCallback = fun;
   }

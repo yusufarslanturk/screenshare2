@@ -131,4 +131,8 @@ impl Display {
     pub fn name(&self) -> String {
         self.0.name()
     }
+
+    pub fn get_shm_status(&self) -> Result<(), x11::Error> {
+        self.0.server().get_shm_status()
+    }
 }

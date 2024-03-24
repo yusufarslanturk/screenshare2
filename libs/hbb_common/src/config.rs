@@ -57,6 +57,7 @@ lazy_static::lazy_static! {
     static ref HW_CODEC_CONFIG: Arc<RwLock<HwCodecConfig>> = Arc::new(RwLock::new(HwCodecConfig::load()));
     static ref USER_DEFAULT_CONFIG: Arc<RwLock<(UserDefaultConfig, Instant)>> = Arc::new(RwLock::new((UserDefaultConfig::load(), Instant::now())));
     pub static ref NEW_STORED_PEER_CONFIG: Arc<Mutex<HashSet<String>>> = Default::default();
+    pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
 }
 
 lazy_static::lazy_static! {
@@ -284,7 +285,8 @@ pub struct PeerConfig {
         skip_serializing_if = "String::is_empty"
     )]
     pub use_all_my_displays_for_the_remote_session: String,
-
+    #[serde(default)]
+    pub public_key: Vec<u8>, 
 
     #[serde(
         default,
@@ -337,6 +339,7 @@ impl Default for PeerConfig {
             ui_flutter: Default::default(),
             info: Default::default(),
             transfer: Default::default(),
+            public_key: Default::default(),			
         }
     }
 }
@@ -1837,6 +1840,88 @@ deserialize_default!(deserialize_hashmap_string_string, HashMap<String, String>)
 deserialize_default!(deserialize_hashmap_string_bool,  HashMap<String, bool>);
 deserialize_default!(deserialize_hashmap_resolutions, HashMap<String, Resolution>);
 
+#[inline]
+fn get_or(
+    a: &RwLock<HashMap<String, String>>,
+    b: &HashMap<String, String>,
+    c: &RwLock<HashMap<String, String>>,
+    k: &str,
+) -> Option<String> {
+    a.read()
+        .unwrap()
+        .get(k)
+        .or(b.get(k))
+        .or(c.read().unwrap().get(k))
+        .cloned()
+}
+
+#[inline]
+fn is_option_can_save(
+    overwrite: &RwLock<HashMap<String, String>>,
+    defaults: &RwLock<HashMap<String, String>>,
+    k: &str,
+    v: &str,
+) -> bool {
+    if overwrite.read().unwrap().contains_key(k) {
+        return false;
+    }
+    if defaults.read().unwrap().get(k).map_or(false, |x| x == v) {
+        return false;
+    }
+    true
+}
+
+#[inline]
+pub fn is_incoming_only() -> bool {
+    HARD_SETTINGS
+        .read()
+        .unwrap()
+        .get("conn-type")
+        .map_or(false, |x| x == ("incoming"))
+}
+
+#[inline]
+pub fn is_outgoing_only() -> bool {
+    HARD_SETTINGS
+        .read()
+        .unwrap()
+        .get("conn-type")
+        .map_or(false, |x| x == ("outgoing"))
+}
+
+#[inline]
+fn is_some_hard_opton(name: &str) -> bool {
+    HARD_SETTINGS
+        .read()
+        .unwrap()
+        .get(name)
+        .map_or(false, |x| x == ("Y"))
+}
+
+#[inline]
+pub fn is_disable_tcp_listen() -> bool {
+    is_some_hard_opton("disable-tcp-listen")
+}
+
+#[inline]
+pub fn is_disable_settings() -> bool {
+    is_some_hard_opton("disable-settings")
+}
+
+#[inline]
+pub fn is_disable_ab() -> bool {
+    is_some_hard_opton("disable-ab")
+}
+
+#[inline]
+pub fn is_disable_account() -> bool {
+    is_some_hard_opton("disable-account")
+}
+
+#[inline]
+pub fn is_disable_installation() -> bool {
+    is_some_hard_opton("disable-installation")
+}
 #[cfg(test)]
 mod tests {
     use super::*;

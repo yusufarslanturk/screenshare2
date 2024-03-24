@@ -6,8 +6,12 @@ pub use bytes;
 use config::Config;
 pub use futures;
 pub use protobuf;
+use protos::message::message;
+use protos::message::Message;
+use protos::message::Misc;
 pub use protos::message as message_proto;
 pub use protos::rendezvous as rendezvous_proto;
+use crate::message_proto::ChatMessage;
 use std::{
     fs::File,
     io::{self, BufRead},
@@ -57,6 +61,31 @@ pub type Stream = quic::Connection;
 #[cfg(not(feature = "quic"))]
 pub type Stream = tcp::FramedStream;
 pub type SessionID = uuid::Uuid;
+
+// E for encryption is implemented as a ChatMessage with a special text string,
+// rather than its own message type or a PublicKey message, because the latter cause problems
+// for fallback compatibility with servers that don't support the LAN encryption flow
+const DIRECT_INITIAL_PUBLIC_KEY_REQUEST_TAG: &'static str = "E"; //Encryption
+
+pub fn set_direct_initial_public_key_request(msg: &mut Message) {
+    let mut misc = Misc::new();
+    misc.set_chat_message(ChatMessage {
+        text: DIRECT_INITIAL_PUBLIC_KEY_REQUEST_TAG.to_string(),
+        ..Default::default()
+    });
+    msg.set_misc(misc);
+}
+
+pub fn is_direct_initial_public_key_request(msg: &Message) -> bool {
+    match &msg.union {
+        Some(message::Union::Misc (
+            Misc { union: Some(
+                message_proto::misc::Union::ChatMessage (ChatMessage {text: s, .. })
+            ), .. }
+        )) if s == DIRECT_INITIAL_PUBLIC_KEY_REQUEST_TAG => true,
+        _ => false
+    }
+}
 
 #[inline]
 pub async fn sleep(sec: f32) {

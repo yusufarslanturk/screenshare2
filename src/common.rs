@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     future::Future,
     sync::{Arc, Mutex, RwLock},
 };
@@ -10,13 +11,6 @@ pub enum GrabState {
     Wait,
     Exit,
 }
-
-#[cfg(not(any(
-    target_os = "android",
-    target_os = "ios",
-    all(target_os = "linux", feature = "unix-file-copy-paste")
-)))]
-pub use arboard::Clipboard as ClipboardContext;
 
 #[cfg(all(target_os = "linux", feature = "unix-file-copy-paste"))]
 static X11_CLIPBOARD: once_cell::sync::OnceCell<x11_clipboard::Clipboard> =
@@ -276,14 +270,18 @@ pub fn create_clipboard_msg(content: String) -> Message {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn check_clipboard(
-    ctx: &mut ClipboardContext,
+    ctx: &mut Option<ClipboardContext>,
     old: Option<&Arc<Mutex<String>>>,
 ) -> Option<Message> {
+    if ctx.is_none() {
+        *ctx = ClipboardContext::new().ok();
+    }
+    let ctx2 = ctx.as_mut()?;
     let side = if old.is_none() { "host" } else { "client" };
     let old = if let Some(old) = old { old } else { &CONTENT };
     let content = {
         let _lock = ARBOARD_MTX.lock().unwrap();
-        ctx.get_text()
+        ctx2.get_text()
     };
     if let Ok(content) = content {
         if content.len() < 2_000_000 && !content.is_empty() {
@@ -1293,3 +1291,79 @@ pub fn check_process(arg: &str, same_uid: bool) -> bool {
     }
     false
 }
+
+
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "ios",
+    all(target_os = "linux", feature = "unix-file-copy-paste")
+)))]
+pub struct ClipboardContext(arboard::Clipboard);
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "ios",
+    all(target_os = "linux", feature = "unix-file-copy-paste")
+)))]
+impl ClipboardContext {
+    #[inline]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn new() -> ResultType<ClipboardContext> {
+        Ok(ClipboardContext(arboard::Clipboard::new()?))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn new() -> ResultType<ClipboardContext> {
+        let dur = arboard::Clipboard::get_x11_server_conn_timeout();
+        let dur_bak = dur;
+        let _restore_timeout_on_ret = SimpleCallOnReturn {
+            b: true,
+            f: Box::new(move || arboard::Clipboard::set_x11_server_conn_timeout(dur_bak)),
+        };
+
+        for i in 1..4 {
+            arboard::Clipboard::set_x11_server_conn_timeout(dur * i);
+            match arboard::Clipboard::new() {
+                Ok(c) => return Ok(ClipboardContext(c)),
+                Err(arboard::Error::X11ServerConnTimeout) => continue,
+                Err(err) => return Err(err.into()),
+            }
+        }
+        bail!("Failed to create clipboard context, timeout");
+    }
+
+    #[inline]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub fn get_text(&mut self) -> ResultType<String> {
+        Ok(self.0.get_text()?)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn get_text(&mut self) -> ResultType<String> {
+        let dur = arboard::Clipboard::get_x11_server_conn_timeout();
+        let dur_bak = dur;
+        let _restore_timeout_on_ret = SimpleCallOnReturn {
+            b: true,
+            f: Box::new(move || arboard::Clipboard::set_x11_server_conn_timeout(dur_bak)),
+        };
+
+        for i in 1..4 {
+            arboard::Clipboard::set_x11_server_conn_timeout(dur * i);
+            match self.0.get_text() {
+                Ok(s) => return Ok(s),
+                Err(arboard::Error::X11ServerConnTimeout) => continue,
+                Err(err) => return Err(err.into()),
+            }
+        }
+        bail!("Failed to get text, timeout");
+    }
+
+    #[inline]
+    pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> ResultType<()> {
+        self.0.set_text(text)?;
+        Ok(())
+    }
+}
+
+

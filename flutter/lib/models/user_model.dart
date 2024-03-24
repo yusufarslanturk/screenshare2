@@ -45,7 +45,7 @@ class UserModel {
       refreshingUser = false;
       final status = response.statusCode;
       if (status == 401 || status == 400) {
-        reset();
+        reset(resetOther: status == 401);
         return;
       }
       final data = json.decode(utf8.decode(response.bodyBytes));

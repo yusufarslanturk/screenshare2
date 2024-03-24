@@ -10,7 +10,7 @@ use bytes::Bytes;
 pub use connection::*;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::config::Config2;
-use hbb_common::tcp::{new_listener};
+use hbb_common::{is_direct_initial_public_key_request, socket_client, tcp::new_listener};
 use hbb_common::{
     allow_err,
     anyhow::{anyhow, Context},
@@ -109,17 +109,17 @@ pub fn new() -> ServerPtr {
     Arc::new(RwLock::new(server))
 }
 
-async fn accept_connection_(server: ServerPtr, socket: Stream, secure: bool) -> ResultType<()> {
+async fn accept_connection_(server: ServerPtr, socket: Stream, secure: bool, direct: bool) -> ResultType<()> {
     let local_addr = socket.local_addr();
     drop(socket);
     // even we drop socket, below still may fail if not use reuse_addr,
     // there is TIME_WAIT before socket really released, so sometimes we
     // see “Only one usage of each socket address is normally permitted” on windows sometimes,
-    accept(new_listener(local_addr, true).await?, server, secure).await?;
+    accept(new_listener(local_addr, true).await?, server, secure, direct).await?;
     Ok(())
 }
 
-pub async fn accept(listener: TcpListener, server: ServerPtr, secure: bool) -> ResultType<()> {
+pub async fn accept(listener: TcpListener, server: ServerPtr, secure: bool, direct: bool) -> ResultType<()> {
     let local_addr = listener.local_addr()?;
     log::info!("Server listening on: {}", &local_addr);
     if let Ok((stream, _)) = timeout(CONNECT_TIMEOUT, listener.accept()).await? {
@@ -130,10 +130,50 @@ pub async fn accept(listener: TcpListener, server: ServerPtr, secure: bool) -> R
             Stream::from(stream, stream_addr),
             local_addr,
             secure,
+            direct
         )
         .await?;
     }
     Ok(())
+}
+
+fn process_client_public_key_message(pk_msg: PublicKey, our_sk_b: &box_::SecretKey, security_numbers: &mut String) 
+    -> ResultType<Option<secretbox::Key>> {
+    if pk_msg.asymmetric_value.len() == box_::PUBLICKEYBYTES {
+        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+        let mut pk_ = [0u8; box_::PUBLICKEYBYTES];
+        pk_[..].copy_from_slice(&pk_msg.asymmetric_value);
+        let their_pk_b = box_::PublicKey(pk_);
+        let symmetric_key =
+            box_::open(&pk_msg.symmetric_value, &nonce, &their_pk_b, &our_sk_b)
+                .map_err(|_| {
+                    anyhow!("Handshake failed: box decryption failure")
+                })?;
+        if symmetric_key.len() != secretbox::KEYBYTES {
+            bail!("Handshake failed: invalid secret key length from peer");
+        }
+        let mut key = [0u8; secretbox::KEYBYTES];
+        key[..].copy_from_slice(&symmetric_key);
+        *security_numbers = hbb_common::password_security::compute_security_code(&our_sk_b,&their_pk_b,);
+        log::info!("Security Code: {security_numbers}");
+        Ok(Some(secretbox::Key(key)))
+    } else if pk_msg.asymmetric_value.is_empty() {
+        log::info!("pk might mismatch in client, fall back to non-secure");
+        log::info!("Force to update pk");
+        Ok(None)
+    } else {
+        bail!("Handshake failed: invalid public sign key length from peer");
+    }
+}
+
+async fn next_message_for_handshake(stream: &mut Stream) -> ResultType<Message> {
+    if let Some(Ok(bytes)) = timeout(CONNECT_TIMEOUT, stream.next()).await? {
+        if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
+            return Ok(msg_in);
+        }
+    }
+    
+    bail!("Handshake failed: invalid message format");
 }
 
 pub async fn create_tcp_connection(
@@ -141,23 +181,25 @@ pub async fn create_tcp_connection(
     stream: Stream,
     addr: SocketAddr,
     secure: bool,
+    direct: bool
 ) -> ResultType<()> {
     let mut stream = stream;
     let id = server.write().unwrap().get_new_id();
-    let (sk, pk) = Config::get_key_pair();
-    log::info!("create tcp connection {} - {} - {}",secure,pk.len(),sk.len());
+    let (sk, initial_pk) = Config::get_key_pair();
+    log::info!("create tcp connection {} - {} - {}",secure,initial_pk.len(),sk.len());
     let mut security_numbers = String::new();
     let avatar_image = String::new();
-    if secure && pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
+    if secure && initial_pk.len() == sign::PUBLICKEYBYTES && sk.len() == sign::SECRETKEYBYTES {
         let mut sk_ = [0u8; sign::SECRETKEYBYTES];
         sk_[..].copy_from_slice(&sk);
         let sk = sign::SecretKey(sk_);
         let mut msg_out = Message::new();
         let (our_pk_b, our_sk_b) = box_::gen_keypair();
+        let peer_id = if !direct { Config::get_id() } else { socket_client::get_lan_ipv4()?.to_string() };
         msg_out.set_signed_id(SignedId {
             id: sign::sign(
                 &IdPk {
-                    id: Config::get_id(),
+                    id: peer_id,
                     pk: Bytes::from(our_pk_b.0.to_vec()),
                     ..Default::default()
                 }
@@ -169,46 +211,37 @@ pub async fn create_tcp_connection(
             ..Default::default()
         });
         timeout(CONNECT_TIMEOUT, stream.send(&msg_out)).await??;
-        match timeout(CONNECT_TIMEOUT, stream.next()).await? {
-            Some(res) => {
-                let bytes = res?;
-                if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
-                    if let Some(message::Union::PublicKey(pk)) = msg_in.union {
-                        if pk.asymmetric_value.len() == box_::PUBLICKEYBYTES {
-                            let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
-                            let mut pk_ = [0u8; box_::PUBLICKEYBYTES];
-                            pk_[..].copy_from_slice(&pk.asymmetric_value);
-                            let their_pk_b = box_::PublicKey(pk_);
-                            let symmetric_key =
-                                box_::open(&pk.symmetric_value, &nonce, &their_pk_b, &our_sk_b)
-                                    .map_err(|_| {
-                                        anyhow!("Handshake failed: box decryption failure")
-                                    })?;
-                            if symmetric_key.len() != secretbox::KEYBYTES {
-                                bail!("Handshake failed: invalid secret key length from peer");
-                            }
-                            let mut key = [0u8; secretbox::KEYBYTES];
-                            key[..].copy_from_slice(&symmetric_key);
-                            stream.set_key(secretbox::Key(key));
-                            security_numbers = hbb_common::password_security::compute_security_code(&our_sk_b,&their_pk_b,);
-                            log::info!("Security Code: {security_numbers}");
-                        } else if pk.asymmetric_value.is_empty() {
-                            log::info!("pk might mismatch in client, fall back to non-secure");
-                            Config::set_key_confirmed(false);
-                            log::info!("Force to update pk");
-                        } else {
-                            bail!("Handshake failed: invalid public sign key length from peer");
-                        }
-                    } else {
-                        log::error!("Handshake failed: invalid message type");
-                    }
-                } else {
-                    bail!("Handshake failed: invalid message format");
+
+        let msg_in = next_message_for_handshake(&mut stream).await?;
+        if is_direct_initial_public_key_request(&msg_in) {
+            let mut msg_out = Message::new();
+            let mut misc = Misc::new();
+            misc.set_unauthenticated_initial_public_key_response(
+                UnauthenticatedInitialPublicKeyResponse {
+                    unauthenticated_initial_public_key: Bytes::from(initial_pk), ..Default::default()
+                }
+            );
+            msg_out.set_misc(misc);
+            timeout(CONNECT_TIMEOUT, stream.send(&msg_out)).await??;
+            let msg_in = next_message_for_handshake(&mut stream).await?;
+            if let Some(message::Union::PublicKey(pk)) = msg_in.union {
+                match process_client_public_key_message(pk, &our_sk_b, &mut security_numbers)? {
+                    Some(key) => stream.set_key(key),
+                    None => Config::set_key_confirmed(false),
                 }
             }
-            None => {
-                bail!("Failed to receive public key");
+            else {
+                log::error!("Handshake failed: invalid message type");
             }
+        }
+        else if let Some(message::Union::PublicKey(pk)) = msg_in.union {
+            match process_client_public_key_message(pk, &our_sk_b, &mut security_numbers)? {
+                Some(key) => stream.set_key(key),
+                None => Config::set_key_confirmed(false),
+            }
+        }
+        else {
+            log::error!("Handshake failed: invalid message type");
         }
     }
 
@@ -226,13 +259,15 @@ pub async fn create_tcp_connection(
     Ok(())
 }
 
+
 pub async fn accept_connection(
     server: ServerPtr,
     socket: Stream,
     peer_addr: SocketAddr,
     secure: bool,
+    direct: bool
 ) {
-    if let Err(err) = accept_connection_(server, socket, secure).await {
+    if let Err(err) = accept_connection_(server, socket, secure, direct).await {
         log::error!("Failed to accept connection from {}: {}", peer_addr, err);
     }
 }
@@ -311,6 +346,8 @@ impl Server {
                 s.on_subscribe(conn.clone());
             }
         }
+        #[cfg(target_os = "macos")]
+        self.update_enable_retina();
         self.connections.insert(conn.id(), conn);
         *CONN_COUNT.lock().unwrap() = self.connections.len();
     }
@@ -321,6 +358,8 @@ impl Server {
         }
         self.connections.remove(&conn.id());
         *CONN_COUNT.lock().unwrap() = self.connections.len();
+        #[cfg(target_os = "macos")]
+        self.update_enable_retina();
     }
 
     pub fn close_connections(&mut self) {
@@ -353,6 +392,8 @@ impl Server {
             } else {
                 s.on_unsubscribe(conn.id());
             }
+            #[cfg(target_os = "macos")]
+            self.update_enable_retina();
         }
     }
 
@@ -401,6 +442,17 @@ impl Server {
                 }
             }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn update_enable_retina(&self) {
+        let mut video_service_count = 0;
+        for (name, service) in self.services.iter() {
+            if Self::is_video_service_name(&name) && service.ok() {
+                video_service_count += 1;
+            }
+        }
+        *scrap::quartz::ENABLE_RETINA.lock().unwrap() = video_service_count < 2;
     }
 }
 

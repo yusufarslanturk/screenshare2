@@ -7,10 +7,12 @@ import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_hbb/models/peer_model.dart';
 
 import '../../common.dart';
 import '../../common/widgets/login.dart';
 import '../../common/widgets/peer_tab_page.dart';
+import '../../common/widgets/autocomplete.dart';
 import '../../consts.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
@@ -43,6 +45,11 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   /// Update url. If it's not null, means an update is available.
   var _updateUrl = '';
+  List<Peer> peers = [];
+
+  bool isPeersLoading = false;
+  bool isPeersLoaded = false;
+  StreamSubscription? _uniLinksSubscription;
 
   @override
   void initState() {
@@ -67,6 +74,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
     _idController.addListener(() {
       _idEmpty.value = _idController.text.isEmpty;
     });
+    Get.put<IDTextEditingController>(_idController);
   }
 
   @override
@@ -80,7 +88,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
           _buildRemoteIDTextField(),
         ])),
         SliverFillRemaining(
-          hasScrollBody: false,
+          hasScrollBody: true,
           child: PeerTabPage(),
         )
       ],
@@ -114,6 +122,18 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 child: Text(translate('Download new version'),
                     style: const TextStyle(
                         color: Colors.white, fontWeight: FontWeight.bold))));
+  }
+
+  Future<void> _fetchPeers() async {
+    setState(() {
+      isPeersLoading = true;
+    });
+    await Future.delayed(Duration(milliseconds: 100));
+    peers = await getAllPeers();
+    setState(() {
+      isPeersLoading = false;
+      isPeersLoaded = true;
+    });
   }
 
   /// UI for the remote ID TextField.
@@ -184,7 +204,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
       ),
     );
     return Align(
-        alignment: Alignment.topLeft,
+        alignment: Alignment.topCenter,
         child: Container(constraints: kMobilePageConstraints, child: w));
   }
 
@@ -247,7 +267,7 @@ class _WebMenuState extends State<WebMenu> {
             if (gFFI.userModel.userName.value.isEmpty) {
               loginDialog();
             } else {
-              gFFI.userModel.logOut();
+              logOutConfirmDialog();
             }
           }
         });

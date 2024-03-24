@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_hbb/models/peer_tab_model.dart';
 
 import '../../common.dart';
 import '../../models/peer_model.dart';
@@ -341,7 +342,7 @@ abstract class BasePeersView extends StatelessWidget {
   final String loadEvent;
   final PeerFilter? peerFilter;
   final PeerCardBuilder peerCardBuilder;
-  final RxList<Peer>? initPeers;
+  final GetInitPeers? getInitPeers;
 
   const BasePeersView({
     Key? key,
@@ -349,13 +350,14 @@ abstract class BasePeersView extends StatelessWidget {
     required this.loadEvent,
     this.peerFilter,
     required this.peerCardBuilder,
-    required this.initPeers,
+    required this.getInitPeers,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return _PeersView(
-        peers: Peers(name: name, loadEvent: loadEvent, initPeers: initPeers),
+        peers:
+            Peers(name: name, loadEvent: loadEvent, getInitPeers: getInitPeers),
         peerFilter: peerFilter,
         peerCardBuilder: peerCardBuilder);
   }
@@ -372,7 +374,7 @@ class RecentPeersView extends BasePeersView {
             peer: peer,
             menuPadding: menuPadding,
           ),
-          initPeers: null,
+          getInitPeers: null,
         );
 
   @override
@@ -394,7 +396,7 @@ class FavoritePeersView extends BasePeersView {
             peer: peer,
             menuPadding: menuPadding,
           ),
-          initPeers: null,
+          getInitPeers: null,
         );
 
   @override
@@ -416,7 +418,7 @@ class DiscoveredPeersView extends BasePeersView {
             peer: peer,
             menuPadding: menuPadding,
           ),
-          initPeers: null,
+          getInitPeers: null,
         );
 
   @override
@@ -432,7 +434,7 @@ class AddressBookPeersView extends BasePeersView {
       {Key? key,
       EdgeInsets? menuPadding,
       ScrollController? scrollController,
-      required RxList<Peer> initPeers})
+      required GetInitPeers getInitPeers})
       : super(
           key: key,
           name: 'address book peer',
@@ -443,7 +445,7 @@ class AddressBookPeersView extends BasePeersView {
             peer: peer,
             menuPadding: menuPadding,
           ),
-          initPeers: initPeers,
+          getInitPeers: getInitPeers,
         );
 
   static bool _hitTag(List<dynamic> selectedTags, List<dynamic> idents) {
@@ -473,7 +475,7 @@ class MyGroupPeerView extends BasePeersView {
       {Key? key,
       EdgeInsets? menuPadding,
       ScrollController? scrollController,
-      required RxList<Peer> initPeers})
+      required GetInitPeers getInitPeers})
       : super(
           key: key,
           name: 'group peer',
@@ -483,7 +485,7 @@ class MyGroupPeerView extends BasePeersView {
             peer: peer,
             menuPadding: menuPadding,
           ),
-          initPeers: initPeers,
+          getInitPeers: getInitPeers,
         );
 
   static bool filter(Peer peer) {

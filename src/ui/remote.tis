@@ -365,7 +365,7 @@ function updateCursor(system=false) {
 }
 
 function refreshCursor() {
-    if (display_cursor_embedded) {
+	if (display_cursor_embedded) {
         cursor_img.style#display = "none";
         return;
     }

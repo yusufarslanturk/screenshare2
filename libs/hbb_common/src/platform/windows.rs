@@ -9,7 +9,7 @@ use winapi::{
     um::{
         handleapi::CloseHandle,
         pdh::{
-            PdhAddCounterA, PdhCloseQuery, PdhCollectQueryData, PdhCollectQueryDataEx,
+            PdhAddEnglishCounterA, PdhCloseQuery, PdhCollectQueryData, PdhCollectQueryDataEx,
             PdhGetFormattedCounterValue, PdhOpenQueryA, PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE,
             PDH_HCOUNTER, PDH_HQUERY,
         },
@@ -71,9 +71,9 @@ pub fn start_cpu_performance_monitor() {
         }
         let _query = RAIIPDHQuery(query);
         let mut counter: PDH_HCOUNTER = std::mem::zeroed();
-        ret = PdhAddCounterA(query, COUNTER_PATH.as_ptr() as _, 0, &mut counter);
+        ret = PdhAddEnglishCounterA(query, COUNTER_PATH.as_ptr() as _, 0, &mut counter);
         if ret != 0 {
-            log::error!("PdhAddCounterA failed: 0x{:X}", ret);
+            log::error!("PdhAddEnglishCounterA failed: 0x{:X}", ret);
             return;
         }
         ret = PdhCollectQueryData(query);
@@ -157,7 +157,6 @@ pub fn sync_cpu_usage(cpu_usage: Option<f64>) {
     *CPU_USAGE_ONE_MINUTE.lock().unwrap() = v;
     log::info!("cpu usage synced: {:?}", cpu_usage);
 }
-
 
 // https://learn.microsoft.com/en-us/windows/win32/sysinfo/targeting-your-application-at-windows-8-1
 // https://github.com/nodejs/node-convergence-archive/blob/e11fe0c2777561827cdb7207d46b0917ef3c42a7/deps/uv/src/win/util.c#L780

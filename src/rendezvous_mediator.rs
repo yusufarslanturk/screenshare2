@@ -242,7 +242,7 @@ impl RendezvousMediator {
                                 Ok(_) => {
                                     let server_clone = server.clone();
                                     tokio::spawn(async move {
-                                        if let Err(error) = crate::accept(listener, server_clone, true).await {
+                                        if let Err(error) = crate::accept(listener, server_clone, true, false).await {
                                             log::error!("accept() failed: {:?}", error);
                                         }
                                         });
@@ -250,7 +250,7 @@ impl RendezvousMediator {
                                             let ipv4_listener = hbb_common::tcp::new_listener(listening.lan_ipv4.unwrap(), true).await?;
                                             let server_clone = server.clone();
                                             tokio::spawn(async move {
-                                                if let Err(error) = crate::accept(ipv4_listener, server_clone, true).await {
+                                                if let Err(error) = crate::accept(ipv4_listener, server_clone, true, false).await {
                                                     log::error!("accept() failed: {:?}", error);
                                                 }
                                             });
@@ -282,6 +282,7 @@ impl RendezvousMediator {
                                                         stream,
                                                         addr,
                                                         true,
+                                                        false
                                                     )
                                                         .await;
                                                 });
@@ -403,6 +404,7 @@ async fn direct_server(server: ServerPtr) {
                             hbb_common::Stream::from(stream, local_addr),
                             addr,
                             true,
+                            true
                         )
                         .await
                     );

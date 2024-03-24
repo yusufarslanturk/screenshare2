@@ -49,6 +49,7 @@ message DisplayInfo {
   bool online = 6;
   bool cursor_embedded = 7;
   Resolution original_resolution = 8;
+  double scale = 9;
 }
 
 message PortForward {
@@ -123,8 +124,15 @@ message PeerInfo {
   SupportedEncoding encoding = 10;
   SupportedResolutions resolutions = 11;
   // Use JSON's key-value format which is friendly for peer to handle.
+  // NOTE: Only support one-level dictionaries (for peer to update), and the key is of type string.
   string platform_additions = 12;
+  WindowsSessions windows_sessions = 13;
 }
+
+message WindowsSession {  
+  uint32 sid = 1;  
+  string name = 2;  
+}  
 
 message LoginResponse {
   oneof union {
@@ -591,6 +599,7 @@ message OptionMessage {
   BoolOption disable_keyboard = 12;
 // Position 13 is used for Resolution. Remove later.
 // Resolution custom_resolution = 13;
+  BoolOption support_windows_specific_session = 14;
 }
 
 message TestDelay {
@@ -694,6 +703,15 @@ message SwitchSidesResponse {
 
 message SwitchBack {}
 
+message UnauthenticatedInitialPublicKeyResponse {
+  bytes unauthenticated_initial_public_key = 1;
+}
+
+message WindowsSessions {
+  repeated WindowsSession sessions = 1;
+  uint32 current_sid = 2;
+}
+
 message Misc {
   oneof union {
     ChatMessage chat_message = 4;
@@ -723,9 +741,18 @@ message Misc {
     ToggleVirtualDisplay toggle_virtual_display = 32;
     TogglePrivacyMode toggle_privacy_mode = 33;
     SupportedEncoding supported_encoding = 34;
+    uint32 selected_sid = 35;
+    // Direct response from the server with its initial public key (the one that exists
+    // prior to the key exchange process) as a last resort for use in situations where 
+    // we can't get it from a rendezvous server or from configuration.
+    // Should not be used if we can instead get an authenticated initial public key, 
+    // but where we can't, the encryption and key exchange this lets us support still
+    // leaves us relatively more secure (e.g., against passive eavesdropping attacks) than
+    // not supporting them at all. 
+	UnauthenticatedInitialPublicKeyResponse unauthenticated_initial_public_key_response = 36;
   }
 }
-
+	
 message VoiceCallRequest {
   int64 req_timestamp = 1;
   // Indicates whether the request is a connect action or a disconnect action.

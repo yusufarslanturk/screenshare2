@@ -32,6 +32,7 @@ pub struct FramedStream(
     SocketAddr,
     Option<Encrypt>,
     u64,
+    Option<BytesMut> // peek buffer 
 );
 
 impl Deref for FramedStream {
@@ -102,6 +103,7 @@ impl FramedStream {
                         addr,
                         None,
                         0,
+                        None,
                     ));
                 }
             }
@@ -151,6 +153,7 @@ impl FramedStream {
                 addr,
                 None,
                 0,
+                None,
             ));
         }
         bail!("could not resolve to any address");
@@ -170,6 +173,7 @@ impl FramedStream {
             addr,
             None,
             0,
+            None,
         )
     }
 
@@ -209,7 +213,37 @@ impl FramedStream {
 
     #[inline]
     pub async fn next(&mut self) -> Option<Result<BytesMut, Error>> {
-        let mut res = self.0.next().await;
+        // if our peek buffer is populated, move the result out of there
+        if self.4.is_some() {
+            return Ok(self.4.take()).transpose();
+        } 
+        else {
+            return self.next_().await;
+        }
+    }
+
+    #[inline]
+    pub async fn peek(&mut self) -> Option<Result<&BytesMut, Error>> {
+        if self.4.is_some() {
+            return Ok(self.4.as_ref()).transpose();
+        } 
+        else {
+            let next_res = self.next_().await;
+            match next_res {
+                Some(Ok(bytes)) => {
+                    self.4 = Some(bytes);
+                    return Ok(self.4.as_ref()).transpose();
+                },
+                Some(Err(err)) => Some(Err(err)),
+                None => None
+            }
+        }
+    }
+
+    #[inline]
+    async fn next_(&mut self) -> Option<Result<BytesMut, Error>> {
+        let mut res: Option<Result<BytesMut, Error>> = self.0.next().await;
+
         if let Some(Ok(bytes)) = res.as_mut() {
             if let Some(key) = self.2.as_mut() {
                 if let Err(err) = key.dec(bytes) {
@@ -218,7 +252,7 @@ impl FramedStream {
             }
         }
         res
-    }
+    } 
 
     #[inline]
     pub async fn next_timeout(&mut self, ms: u64) -> Option<Result<BytesMut, Error>> {

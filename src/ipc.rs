@@ -197,6 +197,7 @@ pub enum Data {
         id: String,
     },
     SAS,
+    UserSid(Option<u32>),
     OnlineStatus(Option<(i64, bool)>),
     Config((String, Option<String>)),
     Options(Option<HashMap<String, String>>),
@@ -477,6 +478,16 @@ async fn handle(data: Data, stream: &mut Connection) {
                     .send(&Data::SyncConfig(Some(
                         (Config::get(), Config2::get()).into()
                     )))
+                    .await
+            );
+        }
+        #[cfg(windows)]
+        Data::SyncWinCpuUsage(None) => {
+            allow_err!(
+                stream
+                    .send(&Data::SyncWinCpuUsage(
+                        hbb_common::platform::windows::cpu_uage_one_minute()
+                    ))
                     .await
             );
         }
@@ -942,6 +953,13 @@ pub fn close_all_instances() -> ResultType<bool> {
         Ok(_) => Ok(true),
         Err(err) => Err(err),
     }
+}
+
+#[tokio::main(flavor = "current_thread")]
+pub async fn connect_to_user_session(usid: Option<u32>) -> ResultType<()> {
+    let mut stream = crate::ipc::connect(1000, crate::POSTFIX_SERVICE).await?;
+    timeout(1000, stream.send(&crate::ipc::Data::UserSid(usid))).await??;
+    Ok(())
 }
 
 #[cfg(test)]

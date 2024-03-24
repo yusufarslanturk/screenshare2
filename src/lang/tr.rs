@@ -364,7 +364,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Audio Input Device", "Ses Giriş Aygıtı"),
         ("Use IP Whitelisting", "IP Beyaz Listeyi Kullan"),
         ("Network", "Ağ"),
-        ("Enable RDP", "RDP Aktif Et"),
         ("Pin menubar", "Menü çubuğunu sabitle"),
         ("Unpin menubar", "Menü çubuğunun sabitlemesini kaldır"),
         ("Recording", "Kayıt Ediliyor"),

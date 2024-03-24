@@ -350,7 +350,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Audio Input Device", "Vhodna naprava za zvok"),
         ("Use IP Whitelisting", "Omogoči seznam dovoljenih IP naslovov"),
         ("Network", "Mreža"),
-        ("Enable RDP", "Omogoči RDP"),
         ("Pin menubar", "Pripni menijsko vrstico"),
         ("Unpin menubar", "Odpni menijsko vrstico"),
         ("Recording", "Snemanje"),

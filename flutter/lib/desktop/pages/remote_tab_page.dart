@@ -95,6 +95,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
           tabController: tabController,
           switchUuid: params['switch_uuid'],
           forceRelay: params['forceRelay'],
+          isSharedPassword: params['isSharedPassword'],
         ),
       ));
       _update_remote_count();
@@ -153,10 +154,11 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
             tabController: tabController,
             switchUuid: switchUuid,
             forceRelay: args['forceRelay'],
+            isSharedPassword: args['isSharedPassword'],
           ),
         ));
       } else if (call.method == kWindowDisableGrabKeyboard) {
-        stateGlobal.grabKeyboard = false;
+        // ???
       } else if (call.method == "onDestroy") {
         tabController.clear();
       } else if (call.method == kWindowActionRebuild) {
@@ -269,8 +271,11 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
                 } else {
                   msgConn = translate("Relayed and unencrypted connection");
                 }
-/*                var msgFingerprint = '${translate('Fingerprint')}:\n';
+                var msgFingerprint = '${translate('Fingerprint')}:\n';
                 var fingerprint = FingerprintState.find(key).value;
+                if (fingerprint.isEmpty) {
+                  fingerprint = 'N/A';
+                }
                 if (fingerprint.length > 5 * 8) {
                   var first = fingerprint.substring(0, 39);
                   var second = fingerprint.substring(40);
@@ -278,13 +283,13 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
                 } else {
                   msgFingerprint += fingerprint;
                 }
-*/
+
                 final tab = Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     icon,
                     Tooltip(
-                      message: '$msgConn', //hophere
+                      message: '$msgConn\n$msgFingerprint',
                       child: SvgPicture.asset(
                         'assets/${connectionType.secure.value}${connectionType.direct.value}.svg',
                         width: themeConf.iconSize,
@@ -383,7 +388,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
             pi.platform == kPeerPlatformMacOS)) {
       menu.add(MenuEntryButton<String>(
         childBuilder: (TextStyle? style) => Text(
-          translate('Restart Remote Device'),
+          translate('Restart remote device'),
           style: style,
         ),
         proc: () => showRestartRemoteDevice(
@@ -404,7 +409,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
       }
     }
 
-    /*menu.addAll([
+    menu.addAll([
       MenuEntryDivider<String>(),
       MenuEntryButton<String>(
         childBuilder: (TextStyle? style) => Text(
@@ -427,7 +432,7 @@ class _ConnectionTabPageState extends State<ConnectionTabPage> {
         },
         padding: padding,
       )
-    ]);*/
+    ]);
 
     return mod_menu.PopupMenu<String>(
       items: menu

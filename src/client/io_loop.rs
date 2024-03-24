@@ -27,6 +27,7 @@ use hbb_common::{
     message_proto::*,
     protobuf::Message as _,
     rendezvous_proto::ConnType,
+    timeout,
     tokio::{
         self,
         sync::mpsc,
@@ -183,8 +184,10 @@ impl<T: InvokeUiSession> Remote<T> {
                                             self.handler.update_received(true);
                                         }
                                         self.data_count.fetch_add(bytes.len(), Ordering::Relaxed);
-                                        if !self.handle_msg_from_peer(bytes, &mut peer).await {
-                                            break
+                                        if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
+                                            if !self.handle_msg_from_peer(msg_in, &mut peer).await {
+                                                break
+                                            }
                                         }
                                     }
                                 }
@@ -282,7 +285,7 @@ impl<T: InvokeUiSession> Remote<T> {
 
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         if _set_disconnected_ok {
-            Client::try_stop_clipboard(&self.handler.get_id());
+            Client::try_stop_clipboard();
         }
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -1036,534 +1039,537 @@ impl<T: InvokeUiSession> Remote<T> {
         }
     }
 
-    async fn handle_msg_from_peer(&mut self, data: &[u8], peer: &mut Stream) -> bool {
-        if let Ok(msg_in) = Message::parse_from_bytes(&data) {
-            match msg_in.union {
-                Some(message::Union::VideoFrame(vf)) => {
-                    if !self.first_frame {
-                        self.first_frame = true;
-                        self.handler.close_success();
-                        self.handler.adapt_size();
-                        self.send_opts_after_login(peer).await;
-                        self.send_toggle_privacy_mode_msg(peer).await;
-                    }
-                    let incoming_format = CodecFormat::from(&vf);
-                    if self.video_format != incoming_format {
-                        self.video_format = incoming_format.clone();
-                        self.handler.update_quality_status(QualityStatus {
-                            codec_format: Some(incoming_format),
-                            ..Default::default()
-                        })
-                    };
+    async fn handle_msg_from_peer(&mut self, msg_in: Message, peer: &mut Stream) -> bool {
+        match msg_in.union {
+            Some(message::Union::VideoFrame(vf)) => {
+                if !self.first_frame {
+                    self.first_frame = true;
+                    self.handler.close_success();
+                    self.handler.adapt_size();
+                    self.send_opts_after_login(peer).await;
+                    self.send_toggle_privacy_mode_msg(peer).await;
+                }
+                let incoming_format = CodecFormat::from(&vf);
+                if self.video_format != incoming_format {
+                    self.video_format = incoming_format.clone();
+                    self.handler.update_quality_status(QualityStatus {
+                        codec_format: Some(incoming_format),
+                        ..Default::default()
+                    })
+                };
 
-                    let display = vf.display as usize;
-                    let mut video_queue_write = self.video_queue_map.write().unwrap();
-                    if !video_queue_write.contains_key(&display) {
-                        video_queue_write.insert(
-                            display,
-                            ArrayQueue::<VideoFrame>::new(crate::client::VIDEO_QUEUE_SIZE),
-                        );
+                let display = vf.display as usize;
+                let mut video_queue_write = self.video_queue_map.write().unwrap();
+                if !video_queue_write.contains_key(&display) {
+                    video_queue_write.insert(
+                        display,
+                        ArrayQueue::<VideoFrame>::new(crate::client::VIDEO_QUEUE_SIZE),
+                    );
+                }
+                if Self::contains_key_frame(&vf) {
+                    if let Some(video_queue) = video_queue_write.get_mut(&display) {
+                        while let Some(_) = video_queue.pop() {}
                     }
-                    if Self::contains_key_frame(&vf) {
-                        if let Some(video_queue) = video_queue_write.get_mut(&display) {
-                            while let Some(_) = video_queue.pop() {}
-                        }
-                        self.video_sender
-                            .send(MediaData::VideoFrame(Box::new(vf)))
-                            .ok();
-                    } else {
-                        if let Some(video_queue) = video_queue_write.get_mut(&display) {
-                            video_queue.force_push(vf);
-                        }
-                        self.video_sender.send(MediaData::VideoQueue(display)).ok();
+                    self.video_sender
+                        .send(MediaData::VideoFrame(Box::new(vf)))
+                        .ok();
+                } else {
+                    if let Some(video_queue) = video_queue_write.get_mut(&display) {
+                        video_queue.force_push(vf);
+                    }
+                    self.video_sender.send(MediaData::VideoQueue(display)).ok();
+                }
+            }
+            Some(message::Union::Hash(hash)) => {
+                self.handler
+                    .handle_hash(&self.handler.password.clone(), hash, peer)
+                    .await;
+            }
+            Some(message::Union::LoginResponse(lr)) => match lr.union {
+                Some(login_response::Union::Error(err)) => {
+                    if !self.handler.handle_login_error(&err) {
+                        return false;
                     }
                 }
-                Some(message::Union::Hash(hash)) => {
-                    self.handler
-                        .handle_hash(&self.handler.password.clone(), hash, peer)
-                        .await;
+                Some(login_response::Union::PeerInfo(pi)) => {
+                    self.handler.handle_peer_info(pi);
+                    self.check_clipboard_file_context();
+                    if !(self.handler.is_file_transfer() || self.handler.is_port_forward()) {
+                        #[cfg(feature = "flutter")]
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        let rx = Client::try_start_clipboard(None);
+                        #[cfg(not(feature = "flutter"))]
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        let rx = Client::try_start_clipboard(Some(
+                            crate::client::ClientClipboardContext {
+                                cfg: self.handler.get_permission_config(),
+                                tx: self.sender.clone(),
+                            },
+                        ));
+                        // To make sure current text clipboard data is updated.
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if let Some(mut rx) = rx {
+                            timeout(common::CLIPBOARD_INTERVAL, rx.recv()).await.ok();
+                        }
+
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if let Some(msg_out) = Client::get_current_text_clipboard_msg() {
+                            let sender = self.sender.clone();
+                            let permission_config = self.handler.get_permission_config();
+                            tokio::spawn(async move {
+                                // due to clipboard service interval time
+                                sleep(common::CLIPBOARD_INTERVAL as f32 / 1_000.).await;
+                                if permission_config.is_text_clipboard_required() {
+                                    sender.send(Data::Message(msg_out)).ok();
+                                }
+                            });
+                        }
+
+                        // on connection established client
+                        #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        crate::plugin::handle_listen_event(
+                            crate::plugin::EVENT_ON_CONN_CLIENT.to_owned(),
+                            self.handler.get_id(),
+                        )
+                    }
+
+                    if self.handler.is_file_transfer() {
+                        self.handler.load_last_jobs();
+                    }
+
+                    self.is_connected = true;
                 }
-                Some(message::Union::LoginResponse(lr)) => match lr.union {
-                    Some(login_response::Union::Error(err)) => {
-                        if !self.handler.handle_login_error(&err) {
-                            return false;
+                _ => {}
+            },
+            Some(message::Union::CursorData(cd)) => {
+                self.handler.set_cursor_data(cd);
+            }
+            Some(message::Union::CursorId(id)) => {
+                self.handler.set_cursor_id(id.to_string());
+            }
+            Some(message::Union::CursorPosition(cp)) => {
+                self.handler.set_cursor_position(cp);
+            }
+            Some(message::Union::Clipboard(cb)) => {
+                if !self.handler.lc.read().unwrap().disable_clipboard.v {
+                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                    update_clipboard(cb, Some(&crate::client::get_old_clipboard_text()));
+                    #[cfg(any(target_os = "android", target_os = "ios"))]
+                    {
+                        let content = if cb.compress {
+                            hbb_common::compress::decompress(&cb.content)
+                        } else {
+                            cb.content.into()
+                        };
+                        if let Ok(content) = String::from_utf8(content) {
+                            self.handler.clipboard(content);
                         }
                     }
-                    Some(login_response::Union::PeerInfo(pi)) => {
-                        self.handler.handle_peer_info(pi);
-                        self.check_clipboard_file_context();
-                        if !(self.handler.is_file_transfer() || self.handler.is_port_forward()) {
-                            #[cfg(feature = "flutter")]
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            Client::try_start_clipboard(None);
-                            #[cfg(not(feature = "flutter"))]
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            Client::try_start_clipboard(Some(
-                                crate::client::ClientClipboardContext {
-                                    cfg: self.handler.get_permission_config(),
-                                    tx: self.sender.clone(),
-                                },
-                            ));
-
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            if let Some(msg_out) = Client::get_current_text_clipboard_msg() {
-                                let sender = self.sender.clone();
-                                let permission_config = self.handler.get_permission_config();
-                                tokio::spawn(async move {
-                                    // due to clipboard service interval time
-                                    sleep(common::CLIPBOARD_INTERVAL as f32 / 1_000.).await;
-                                    if permission_config.is_text_clipboard_required() {
-                                        sender.send(Data::Message(msg_out)).ok();
-                                    }
-                                });
+                }
+            }
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+            Some(message::Union::Cliprdr(clip)) => {
+                self.handle_cliprdr_msg(clip);
+            }
+            Some(message::Union::FileResponse(fr)) => {
+                match fr.union {
+                    Some(file_response::Union::Dir(fd)) => {
+                        #[cfg(windows)]
+                        let entries = fd.entries.to_vec();
+                        #[cfg(not(windows))]
+                        let mut entries = fd.entries.to_vec();
+                        #[cfg(not(windows))]
+                        {
+                            if self.handler.peer_platform() == "Windows" {
+                                fs::transform_windows_path(&mut entries);
                             }
-
-                            // on connection established client
-                            #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            crate::plugin::handle_listen_event(
-                                crate::plugin::EVENT_ON_CONN_CLIENT.to_owned(),
-                                self.handler.get_id(),
-                            )
                         }
-
-                        if self.handler.is_file_transfer() {
-                            self.handler.load_last_jobs();
+                        self.handler
+                            .update_folder_files(fd.id, &entries, fd.path, false, false);
+                        if let Some(job) = fs::get_job(fd.id, &mut self.write_jobs) {
+                            log::info!("job set_files: {:?}", entries);
+                            job.set_files(entries);
+                        } else if let Some(job) = self.remove_jobs.get_mut(&fd.id) {
+                            job.files = entries;
                         }
-
-                        self.is_connected = true;
+                    }
+                    Some(file_response::Union::Digest(digest)) => {
+                        if digest.is_upload {
+                            if let Some(job) = fs::get_job(digest.id, &mut self.read_jobs) {
+                                if let Some(file) = job.files().get(digest.file_num as usize) {
+                                    let read_path = get_string(&job.join(&file.name));
+                                    let overwrite_strategy = job.default_overwrite_strategy();
+                                    if let Some(overwrite) = overwrite_strategy {
+                                        let req = FileTransferSendConfirmRequest {
+                                            id: digest.id,
+                                            file_num: digest.file_num,
+                                            union: Some(if overwrite {
+                                                file_transfer_send_confirm_request::Union::OffsetBlk(0)
+                                            } else {
+                                                file_transfer_send_confirm_request::Union::Skip(
+                                                    true,
+                                                )
+                                            }),
+                                            ..Default::default()
+                                        };
+                                        job.confirm(&req);
+                                        let msg = new_send_confirm(req);
+                                        allow_err!(peer.send(&msg).await);
+                                    } else {
+                                        self.handler.override_file_confirm(
+                                            digest.id,
+                                            digest.file_num,
+                                            read_path,
+                                            true,
+                                            digest.is_identical,
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            if let Some(job) = fs::get_job(digest.id, &mut self.write_jobs) {
+                                if let Some(file) = job.files().get(digest.file_num as usize) {
+                                    let write_path = get_string(&job.join(&file.name));
+                                    let overwrite_strategy = job.default_overwrite_strategy();
+                                    match fs::is_write_need_confirmation(&write_path, &digest) {
+                                        Ok(res) => match res {
+                                            DigestCheckResult::IsSame => {
+                                                let req = FileTransferSendConfirmRequest {
+                                                    id: digest.id,
+                                                    file_num: digest.file_num,
+                                                    union: Some(file_transfer_send_confirm_request::Union::Skip(true)),
+                                                    ..Default::default()
+                                                };
+                                                job.confirm(&req);
+                                                let msg = new_send_confirm(req);
+                                                allow_err!(peer.send(&msg).await);
+                                            }
+                                            DigestCheckResult::NeedConfirm(digest) => {
+                                                if let Some(overwrite) = overwrite_strategy {
+                                                    let req = FileTransferSendConfirmRequest {
+                                                        id: digest.id,
+                                                        file_num: digest.file_num,
+                                                        union: Some(if overwrite {
+                                                            file_transfer_send_confirm_request::Union::OffsetBlk(0)
+                                                        } else {
+                                                            file_transfer_send_confirm_request::Union::Skip(true)
+                                                        }),
+                                                        ..Default::default()
+                                                    };
+                                                    job.confirm(&req);
+                                                    let msg = new_send_confirm(req);
+                                                    allow_err!(peer.send(&msg).await);
+                                                } else {
+                                                    self.handler.override_file_confirm(
+                                                        digest.id,
+                                                        digest.file_num,
+                                                        write_path,
+                                                        false,
+                                                        digest.is_identical,
+                                                    );
+                                                }
+                                            }
+                                            DigestCheckResult::NoSuchFile => {
+                                                let req = FileTransferSendConfirmRequest {
+                                                    id: digest.id,
+                                                    file_num: digest.file_num,
+                                                    union: Some(file_transfer_send_confirm_request::Union::OffsetBlk(0)),
+                                                    ..Default::default()
+                                                };
+                                                job.confirm(&req);
+                                                let msg = new_send_confirm(req);
+                                                allow_err!(peer.send(&msg).await);
+                                            }
+                                        },
+                                        Err(err) => {
+                                            println!("error receiving digest: {}", err);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(file_response::Union::Block(block)) => {
+                        if let Some(job) = fs::get_job(block.id, &mut self.write_jobs) {
+                            if let Err(_err) = job.write(block).await {
+                                // to-do: add "skip" for writing job
+                            }
+                            self.update_jobs_status();
+                        }
+                    }
+                    Some(file_response::Union::Done(d)) => {
+                        let mut err: Option<String> = None;
+                        if let Some(job) = fs::get_job(d.id, &mut self.write_jobs) {
+                            job.modify_time();
+                            err = job.job_error();
+                            fs::remove_job(d.id, &mut self.write_jobs);
+                        }
+                        self.handle_job_status(d.id, d.file_num, err);
+                    }
+                    Some(file_response::Union::Error(e)) => {
+                        if let Some(_job) = fs::get_job(e.id, &mut self.write_jobs) {
+                            fs::remove_job(e.id, &mut self.write_jobs);
+                        }
+                        self.handle_job_status(e.id, e.file_num, Some(e.error));
                     }
                     _ => {}
-                },
-                Some(message::Union::CursorData(cd)) => {
-                    self.handler.set_cursor_data(cd);
                 }
-                Some(message::Union::CursorId(id)) => {
-                    self.handler.set_cursor_id(id.to_string());
+            }
+            Some(message::Union::Misc(misc)) => match misc.union {
+                Some(misc::Union::AudioFormat(f)) => {
+                    self.audio_sender.send(MediaData::AudioFormat(f)).ok();
                 }
-                Some(message::Union::CursorPosition(cp)) => {
-                    self.handler.set_cursor_position(cp);
+                Some(misc::Union::ChatMessage(c)) => {
+                    self.handler.new_message(c.text);
                 }
-                Some(message::Union::Clipboard(cb)) => {
-                    if !self.handler.lc.read().unwrap().disable_clipboard.v {
-                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(cb, Some(&crate::client::get_old_clipboard_text()));
-                        #[cfg(any(target_os = "android", target_os = "ios"))]
-                        {
-                            let content = if cb.compress {
-                                hbb_common::compress::decompress(&cb.content)
-                            } else {
-                                cb.content.into()
-                            };
-                            if let Ok(content) = String::from_utf8(content) {
-                                self.handler.clipboard(content);
-                            }
+                Some(misc::Union::PermissionInfo(p)) => {
+                    log::info!("Change permission {:?} -> {}", p.permission, p.enabled);
+                    // https://github.com/rustdesk/rustdesk/issues/3703#issuecomment-1474734754
+                    match p.permission.enum_value() {
+                        Ok(Permission::Keyboard) => {
+                            #[cfg(feature = "flutter")]
+                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                            crate::flutter::update_text_clipboard_required();
+                            *self.handler.server_keyboard_enabled.write().unwrap() = p.enabled;
+                            self.handler.set_permission("keyboard", p.enabled);
                         }
-                    }
-                }
-                #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-                Some(message::Union::Cliprdr(clip)) => {
-                    self.handle_cliprdr_msg(clip);
-                }
-                Some(message::Union::FileResponse(fr)) => {
-                    match fr.union {
-                        Some(file_response::Union::Dir(fd)) => {
-                            #[cfg(windows)]
-                            let entries = fd.entries.to_vec();
-                            #[cfg(not(windows))]
-                            let mut entries = fd.entries.to_vec();
-                            #[cfg(not(windows))]
-                            {
-                                if self.handler.peer_platform() == "Windows" {
-                                    fs::transform_windows_path(&mut entries);
-                                }
-                            }
-                            self.handler
-                                .update_folder_files(fd.id, &entries, fd.path, false, false);
-                            if let Some(job) = fs::get_job(fd.id, &mut self.write_jobs) {
-                                log::info!("job set_files: {:?}", entries);
-                                job.set_files(entries);
-                            } else if let Some(job) = self.remove_jobs.get_mut(&fd.id) {
-                                job.files = entries;
-                            }
+                        Ok(Permission::Clipboard) => {
+                            #[cfg(feature = "flutter")]
+                            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                            crate::flutter::update_text_clipboard_required();
+                            *self.handler.server_clipboard_enabled.write().unwrap() = p.enabled;
+                            self.handler.set_permission("clipboard", p.enabled);
                         }
-                        Some(file_response::Union::Digest(digest)) => {
-                            if digest.is_upload {
-                                if let Some(job) = fs::get_job(digest.id, &mut self.read_jobs) {
-                                    if let Some(file) = job.files().get(digest.file_num as usize) {
-                                        let read_path = get_string(&job.join(&file.name));
-                                        let overwrite_strategy = job.default_overwrite_strategy();
-                                        if let Some(overwrite) = overwrite_strategy {
-                                            let req = FileTransferSendConfirmRequest {
-                                                id: digest.id,
-                                                file_num: digest.file_num,
-                                                union: Some(if overwrite {
-                                                    file_transfer_send_confirm_request::Union::OffsetBlk(0)
-                                                } else {
-                                                    file_transfer_send_confirm_request::Union::Skip(
-                                                        true,
-                                                    )
-                                                }),
-                                                ..Default::default()
-                                            };
-                                            job.confirm(&req);
-                                            let msg = new_send_confirm(req);
-                                            allow_err!(peer.send(&msg).await);
-                                        } else {
-                                            self.handler.override_file_confirm(
-                                                digest.id,
-                                                digest.file_num,
-                                                read_path,
-                                                true,
-                                                digest.is_identical,
-                                            );
-                                        }
-                                    }
-                                }
-                            } else {
-                                if let Some(job) = fs::get_job(digest.id, &mut self.write_jobs) {
-                                    if let Some(file) = job.files().get(digest.file_num as usize) {
-                                        let write_path = get_string(&job.join(&file.name));
-                                        let overwrite_strategy = job.default_overwrite_strategy();
-                                        match fs::is_write_need_confirmation(&write_path, &digest) {
-                                            Ok(res) => match res {
-                                                DigestCheckResult::IsSame => {
-                                                    let req = FileTransferSendConfirmRequest {
-                                                        id: digest.id,
-                                                        file_num: digest.file_num,
-                                                        union: Some(file_transfer_send_confirm_request::Union::Skip(true)),
-                                                        ..Default::default()
-                                                    };
-                                                    job.confirm(&req);
-                                                    let msg = new_send_confirm(req);
-                                                    allow_err!(peer.send(&msg).await);
-                                                }
-                                                DigestCheckResult::NeedConfirm(digest) => {
-                                                    if let Some(overwrite) = overwrite_strategy {
-                                                        let req = FileTransferSendConfirmRequest {
-                                                            id: digest.id,
-                                                            file_num: digest.file_num,
-                                                            union: Some(if overwrite {
-                                                                file_transfer_send_confirm_request::Union::OffsetBlk(0)
-                                                            } else {
-                                                                file_transfer_send_confirm_request::Union::Skip(true)
-                                                            }),
-                                                            ..Default::default()
-                                                        };
-                                                        job.confirm(&req);
-                                                        let msg = new_send_confirm(req);
-                                                        allow_err!(peer.send(&msg).await);
-                                                    } else {
-                                                        self.handler.override_file_confirm(
-                                                            digest.id,
-                                                            digest.file_num,
-                                                            write_path,
-                                                            false,
-                                                            digest.is_identical,
-                                                        );
-                                                    }
-                                                }
-                                                DigestCheckResult::NoSuchFile => {
-                                                    let req = FileTransferSendConfirmRequest {
-                                                        id: digest.id,
-                                                        file_num: digest.file_num,
-                                                        union: Some(file_transfer_send_confirm_request::Union::OffsetBlk(0)),
-                                                        ..Default::default()
-                                                    };
-                                                    job.confirm(&req);
-                                                    let msg = new_send_confirm(req);
-                                                    allow_err!(peer.send(&msg).await);
-                                                }
-                                            },
-                                            Err(err) => {
-                                                println!("error receiving digest: {}", err);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        Ok(Permission::Audio) => {
+                            self.handler.set_permission("audio", p.enabled);
                         }
-                        Some(file_response::Union::Block(block)) => {
-                            if let Some(job) = fs::get_job(block.id, &mut self.write_jobs) {
-                                if let Err(_err) = job.write(block).await {
-                                    // to-do: add "skip" for writing job
-                                }
-                                self.update_jobs_status();
+                        Ok(Permission::File) => {
+                            *self.handler.server_file_transfer_enabled.write().unwrap() =
+                                p.enabled;
+                            if !p.enabled && self.handler.is_file_transfer() {
+                                return true;
                             }
+                            self.handler.set_permission("file", p.enabled);
                         }
-                        Some(file_response::Union::Done(d)) => {
-                            let mut err: Option<String> = None;
-                            if let Some(job) = fs::get_job(d.id, &mut self.write_jobs) {
-                                job.modify_time();
-                                err = job.job_error();
-                                fs::remove_job(d.id, &mut self.write_jobs);
-                            }
-                            self.handle_job_status(d.id, d.file_num, err);
+                        Ok(Permission::Restart) => {
+                            self.handler.set_permission("restart", p.enabled);
                         }
-                        Some(file_response::Union::Error(e)) => {
-                            if let Some(_job) = fs::get_job(e.id, &mut self.write_jobs) {
-                                fs::remove_job(e.id, &mut self.write_jobs);
-                            }
-                            self.handle_job_status(e.id, e.file_num, Some(e.error));
+                        Ok(Permission::Recording) => {
+                            self.handler.set_permission("recording", p.enabled);
+                        }
+                        Ok(Permission::BlockInput) => {
+                            self.handler.set_permission("block_input", p.enabled);
                         }
                         _ => {}
                     }
                 }
-                Some(message::Union::Misc(misc)) => match misc.union {
-                    Some(misc::Union::AudioFormat(f)) => {
-                        self.audio_sender.send(MediaData::AudioFormat(f)).ok();
+                Some(misc::Union::SwitchDisplay(s)) => {
+                    self.handler.handle_peer_switch_display(&s);
+                    self.video_sender
+                        .send(MediaData::Reset(s.display as _))
+                        .ok();
+                    if s.width > 0 && s.height > 0 {
+                        self.handler.set_display(
+                            s.x,
+                            s.y,
+                            s.width,
+                            s.height,
+                            s.cursor_embedded,
+                        );
                     }
-                    Some(misc::Union::ChatMessage(c)) => {
-                        self.handler.new_message(c.text);
-                    }
-                    Some(misc::Union::PermissionInfo(p)) => {
-                        log::info!("Change permission {:?} -> {}", p.permission, p.enabled);
-                        // https://github.com/rustdesk/rustdesk/issues/3703#issuecomment-1474734754
-                        match p.permission.enum_value() {
-                            Ok(Permission::Keyboard) => {
-                                #[cfg(feature = "flutter")]
-                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                                crate::flutter::update_text_clipboard_required();
-                                *self.handler.server_keyboard_enabled.write().unwrap() = p.enabled;
-                                self.handler.set_permission("keyboard", p.enabled);
-                            }
-                            Ok(Permission::Clipboard) => {
-                                #[cfg(feature = "flutter")]
-                                #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                                crate::flutter::update_text_clipboard_required();
-                                *self.handler.server_clipboard_enabled.write().unwrap() = p.enabled;
-                                self.handler.set_permission("clipboard", p.enabled);
-                            }
-                            Ok(Permission::Audio) => {
-                                self.handler.set_permission("audio", p.enabled);
-                            }
-                            Ok(Permission::File) => {
-                                *self.handler.server_file_transfer_enabled.write().unwrap() =
-                                    p.enabled;
-                                if !p.enabled && self.handler.is_file_transfer() {
-                                    return true;
-                                }
-                                self.handler.set_permission("file", p.enabled);
-                            }
-                            Ok(Permission::Restart) => {
-                                self.handler.set_permission("restart", p.enabled);
-                            }
-                            Ok(Permission::Recording) => {
-                                self.handler.set_permission("recording", p.enabled);
-                            }
-                            Ok(Permission::BlockInput) => {
-                                self.handler.set_permission("block_input", p.enabled);
-                            }
-                            _ => {}
-                        }
-                    }
-                    Some(misc::Union::SwitchDisplay(s)) => {
-                        self.handler.handle_peer_switch_display(&s);
-                        self.video_sender
-                            .send(MediaData::Reset(s.display as _))
-                            .ok();
-                        if s.width > 0 && s.height > 0 {
-                            self.handler.set_display(
-                                s.x,
-                                s.y,
-                                s.width,
-                                s.height,
-                                s.cursor_embedded,
-                            );
-                        }
-                    }
-                    Some(misc::Union::CloseReason(c)) => {
-                        self.handler.msgbox("error", "Connection Error", &c, "");
+                }
+                Some(misc::Union::CloseReason(c)) => {
+                    self.handler.msgbox("error", "Connection Error", &c, "");
+                    return false;
+                }
+                Some(misc::Union::BackNotification(notification)) => {
+                    if !self.handle_back_notification(notification).await {
                         return false;
                     }
-                    Some(misc::Union::BackNotification(notification)) => {
-                        if !self.handle_back_notification(notification).await {
-                            return false;
-                        }
-                    }
-                    Some(misc::Union::Uac(uac)) => {
-                        let keyboard = self.handler.server_keyboard_enabled.read().unwrap().clone();
-                        #[cfg(feature = "flutter")]
-                        {
-                            if uac && keyboard {
-                                self.handler.msgbox(
-                                    "on-uac",
-                                    "Prompt",
-                                    "Please wait for confirmation of UAC...",
-                                    "",
-                                );
-                            } else {
-                                self.handler.cancel_msgbox("on-uac");
-                                self.handler.cancel_msgbox("wait-uac");
-                                self.handler.cancel_msgbox("elevation-error");
-                            }
-                        }
-                        #[cfg(not(feature = "flutter"))]
-                        {
-                            let msgtype = "custom-uac-nocancel";
-                            let title = "Prompt";
-                            let text = "Please wait for confirmation of UAC...";
-                            let link = "";
-                            if uac && keyboard {
-                                self.handler.msgbox(msgtype, title, text, link);
-                            } else {
-                                self.handler.cancel_msgbox(&format!(
-                                    "{}-{}-{}-{}",
-                                    msgtype, title, text, link,
-                                ));
-                            }
-                        }
-                    }
-                    Some(misc::Union::ForegroundWindowElevated(elevated)) => {
-                        let keyboard = self.handler.server_keyboard_enabled.read().unwrap().clone();
-                        #[cfg(feature = "flutter")]
-                        {
-                            if elevated && keyboard {
-                                self.handler.msgbox(
-                                    "on-foreground-elevated",
-                                    "Prompt",
-                                    "elevated_foreground_window_tip",
-                                    "",
-                                );
-                            } else {
-                                self.handler.cancel_msgbox("on-foreground-elevated");
-                                self.handler.cancel_msgbox("wait-uac");
-                                self.handler.cancel_msgbox("elevation-error");
-                            }
-                        }
-                        #[cfg(not(feature = "flutter"))]
-                        {
-                            let msgtype = "custom-elevated-foreground-nocancel";
-                            let title = "Prompt";
-                            let text = "elevated_foreground_window_tip";
-                            let link = "";
-                            if elevated && keyboard {
-                                self.handler.msgbox(msgtype, title, text, link);
-                            } else {
-                                self.handler.cancel_msgbox(&format!(
-                                    "{}-{}-{}-{}",
-                                    msgtype, title, text, link,
-                                ));
-                            }
-                        }
-                    }
-                    Some(misc::Union::ElevationResponse(err)) => {
-                        if err.is_empty() {
-                            self.handler.msgbox("wait-uac", "", "", "");
-                        } else {
-                            self.handler.cancel_msgbox("wait-uac");
-                            self.handler
-                                .msgbox("elevation-error", "Elevation Error", &err, "");
-                        }
-                    }
-                    Some(misc::Union::PortableServiceRunning(b)) => {
-                        self.handler.portable_service_running(b);
-                        if self.elevation_requested && b {
+                }
+                Some(misc::Union::Uac(uac)) => {
+                    let keyboard = self.handler.server_keyboard_enabled.read().unwrap().clone();
+                    #[cfg(feature = "flutter")]
+                    {
+                        if uac && keyboard {
                             self.handler.msgbox(
-                                "custom-nocancel-success",
-                                "Successful",
-                                "Elevate successfully",
+                                "on-uac",
+                                "Prompt",
+                                "Please wait for confirmation of UAC...",
                                 "",
                             );
-                        }
-                    }
-                    Some(misc::Union::SwitchBack(_)) => {
-                        #[cfg(feature = "flutter")]
-                        self.handler.switch_back(&self.handler.get_id());
-                    }
-                    #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    Some(misc::Union::PluginRequest(p)) => {
-                        allow_err!(crate::plugin::handle_server_event(
-                            &p.id,
-                            &self.handler.get_id(),
-                            &p.content
-                        ));
-                        // to-do: show message box on UI when error occurs?
-                    }
-                    #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
-                    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                    Some(misc::Union::PluginFailure(p)) => {
-                        let name = if p.name.is_empty() {
-                            "plugin".to_string()
                         } else {
-                            p.name
-                        };
-                        self.handler.msgbox("custom-nocancel", &name, &p.msg, "");
-                    }
-                    Some(misc::Union::SupportedEncoding(e)) => {
-                        log::info!("update supported encoding:{:?}", e);
-                        self.handler.lc.write().unwrap().supported_encoding = e;
-                    }
-
-                    _ => {}
-                },
-                Some(message::Union::TestDelay(t)) => {
-                    self.handler.handle_test_delay(t, peer).await;
-                }
-                Some(message::Union::AudioFrame(frame)) => {
-                    if !self.handler.lc.read().unwrap().disable_audio.v {
-                        self.audio_sender
-                            .send(MediaData::AudioFrame(Box::new(frame)))
-                            .ok();
-                    }
-                }
-                Some(message::Union::FileAction(action)) => match action.union {
-                    Some(file_action::Union::SendConfirm(c)) => {
-                        if let Some(job) = fs::get_job(c.id, &mut self.read_jobs) {
-                            job.confirm(&c);
+                            self.handler.cancel_msgbox("on-uac");
+                            self.handler.cancel_msgbox("wait-uac");
+                            self.handler.cancel_msgbox("elevation-error");
                         }
                     }
-                    _ => {}
-                },
-                Some(message::Union::MessageBox(msgbox)) => {
-                    let mut link = msgbox.link;
-                    // Links from the remote side must be verified.
-                    if !link.starts_with("rustdesk://") {
-                        if let Some(v) = hbb_common::config::HELPER_URL.get(&link as &str) {
-                            link = v.to_string();
+                    #[cfg(not(feature = "flutter"))]
+                    {
+                        let msgtype = "custom-uac-nocancel";
+                        let title = "Prompt";
+                        let text = "Please wait for confirmation of UAC...";
+                        let link = "";
+                        if uac && keyboard {
+                            self.handler.msgbox(msgtype, title, text, link);
                         } else {
-                            log::warn!("Message box ignore link {} for security", &link);
-                            link = "".to_string();
+                            self.handler.cancel_msgbox(&format!(
+                                "{}-{}-{}-{}",
+                                msgtype, title, text, link,
+                            ));
                         }
                     }
-                    self.handler
-                        .msgbox(&msgbox.msgtype, &msgbox.title, &msgbox.text, &link);
                 }
-                Some(message::Union::VoiceCallRequest(request)) => {
-                    if request.is_connect {
-                        // TODO: maybe we will do a voice call from the peer in the future.
+                Some(misc::Union::ForegroundWindowElevated(elevated)) => {
+                    let keyboard = self.handler.server_keyboard_enabled.read().unwrap().clone();
+                    #[cfg(feature = "flutter")]
+                    {
+                        if elevated && keyboard {
+                            self.handler.msgbox(
+                                "on-foreground-elevated",
+                                "Prompt",
+                                "elevated_foreground_window_tip",
+                                "",
+                            );
+                        } else {
+                            self.handler.cancel_msgbox("on-foreground-elevated");
+                            self.handler.cancel_msgbox("wait-uac");
+                            self.handler.cancel_msgbox("elevation-error");
+                        }
+                    }
+                    #[cfg(not(feature = "flutter"))]
+                    {
+                        let msgtype = "custom-elevated-foreground-nocancel";
+                        let title = "Prompt";
+                        let text = "elevated_foreground_window_tip";
+                        let link = "";
+                        if elevated && keyboard {
+                            self.handler.msgbox(msgtype, title, text, link);
+                        } else {
+                            self.handler.cancel_msgbox(&format!(
+                                "{}-{}-{}-{}",
+                                msgtype, title, text, link,
+                            ));
+                        }
+                    }
+                }
+                Some(misc::Union::ElevationResponse(err)) => {
+                    if err.is_empty() {
+                        self.handler.msgbox("wait-uac", "", "", "");
                     } else {
-                        log::debug!("The remote has requested to close the voice call");
-                        if let Some(sender) = self.stop_voice_call_sender.take() {
-                            allow_err!(sender.send(()));
+                        self.handler.cancel_msgbox("wait-uac");
+                        self.handler
+                            .msgbox("elevation-error", "Elevation Error", &err, "");
+                    }
+                }
+                Some(misc::Union::PortableServiceRunning(b)) => {
+                    self.handler.portable_service_running(b);
+                    if self.elevation_requested && b {
+                        self.handler.msgbox(
+                            "custom-nocancel-success",
+                            "Successful",
+                            "Elevate successfully",
+                            "",
+                        );
+                    }
+                }
+                Some(misc::Union::SwitchBack(_)) => {
+                    #[cfg(feature = "flutter")]
+                    self.handler.switch_back(&self.handler.get_id());
+                }
+                #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                Some(misc::Union::PluginRequest(p)) => {
+                    allow_err!(crate::plugin::handle_server_event(
+                        &p.id,
+                        &self.handler.get_id(),
+                        &p.content
+                    ));
+                    // to-do: show message box on UI when error occurs?
+                }
+                #[cfg(all(feature = "flutter", feature = "plugin_framework"))]
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                Some(misc::Union::PluginFailure(p)) => {
+                    let name = if p.name.is_empty() {
+                        "plugin".to_string()
+                    } else {
+                        p.name
+                    };
+                    self.handler.msgbox("custom-nocancel", &name, &p.msg, "");
+                }
+                Some(misc::Union::SupportedEncoding(e)) => {
+                    log::info!("update supported encoding:{:?}", e);
+                    self.handler.lc.write().unwrap().supported_encoding = e;
+                }
+
+                _ => {}
+            },
+            Some(message::Union::TestDelay(t)) => {
+                self.handler.handle_test_delay(t, peer).await;
+            }
+            Some(message::Union::AudioFrame(frame)) => {
+                if !self.handler.lc.read().unwrap().disable_audio.v {
+                    self.audio_sender
+                        .send(MediaData::AudioFrame(Box::new(frame)))
+                        .ok();
+                }
+            }
+            Some(message::Union::FileAction(action)) => match action.union {
+                Some(file_action::Union::SendConfirm(c)) => {
+                    if let Some(job) = fs::get_job(c.id, &mut self.read_jobs) {
+                        job.confirm(&c);
+                    }
+                }
+                _ => {}
+            },
+            Some(message::Union::MessageBox(msgbox)) => {
+                let mut link = msgbox.link;
+                // Links from the remote side must be verified.
+                if !link.starts_with("rustdesk://") {
+                    if let Some(v) = hbb_common::config::HELPER_URL.get(&link as &str) {
+                        link = v.to_string();
+                    } else {
+                        log::warn!("Message box ignore link {} for security", &link);
+                        link = "".to_string();
+                    }
+                }
+                self.handler
+                    .msgbox(&msgbox.msgtype, &msgbox.title, &msgbox.text, &link);
+            }
+            Some(message::Union::VoiceCallRequest(request)) => {
+                if request.is_connect {
+                    // TODO: maybe we will do a voice call from the peer in the future.
+                } else {
+                    log::debug!("The remote has requested to close the voice call");
+                    if let Some(sender) = self.stop_voice_call_sender.take() {
+                        allow_err!(sender.send(()));
+                        self.handler.on_voice_call_closed("");
+                    }
+                }
+            }
+            Some(message::Union::VoiceCallResponse(response)) => {
+                let ts = std::mem::replace(&mut self.voice_call_request_timestamp, None);
+                if let Some(ts) = ts {
+                    if response.req_timestamp != ts.get() {
+                        log::debug!("Possible encountering a voice call attack.");
+                    } else {
+                        if response.accepted {
+                            // The peer accepted the voice call.
+                            self.handler.on_voice_call_started();
+                            self.stop_voice_call_sender = self.start_voice_call();
+                        } else {
+                            // The peer refused the voice call.
                             self.handler.on_voice_call_closed("");
                         }
                     }
                 }
-                Some(message::Union::VoiceCallResponse(response)) => {
-                    let ts = std::mem::replace(&mut self.voice_call_request_timestamp, None);
-                    if let Some(ts) = ts {
-                        if response.req_timestamp != ts.get() {
-                            log::debug!("Possible encountering a voice call attack.");
-                        } else {
-                            if response.accepted {
-                                // The peer accepted the voice call.
-                                self.handler.on_voice_call_started();
-                                self.stop_voice_call_sender = self.start_voice_call();
-                            } else {
-                                // The peer refused the voice call.
-                                self.handler.on_voice_call_closed("");
-                            }
-                        }
-                    }
-                }
-                Some(message::Union::PeerInfo(pi)) => {
-                    self.handler.set_displays(&pi.displays);
-                    self.handler.set_platform_additions(&pi.platform_additions);
-                }
-                _ => {}
             }
+            Some(message::Union::PeerInfo(pi)) => {
+                self.handler.set_displays(&pi.displays);
+                self.handler.set_platform_additions(&pi.platform_additions);
+            }
+            _ => {}
         }
         true
     }

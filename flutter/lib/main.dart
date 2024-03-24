@@ -14,14 +14,11 @@ import 'package:flutter_hbb/desktop/screen/desktop_port_forward_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_remote_screen.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
-//import 'package:flutter_hbb/plugin/handlers.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
-
-// import 'package:window_manager/window_manager.dart';
 
 import 'common.dart';
 import 'consts.dart';
@@ -29,17 +26,11 @@ import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
 import 'models/platform_model.dart';
 
+   
 /// Basic window and launch properties.
 int? kWindowId;
 WindowType? kWindowType;
 late List<String> kBootArgs;
-
-/// Lists for Foreground and Server apps
-final List<String> foregroundApps = [];
-final List<String> serverApps = [];
-
-/// Uni links.
-StreamSubscription? _uniLinkSubscription;
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -120,9 +111,6 @@ Future<void> initEnv(String appType) async {
   _registerEventHandler();
   // Update the system theme.
   updateSystemWindowTheme();
-
-  // Fetch apps from api
-  //await gFFI.serverModel.getMD5Apps(); //hophere
 }
 
 void runMainApp(bool startService) async {
@@ -156,19 +144,16 @@ void runMainApp(bool startService) async {
     }*/
     windowManager.setOpacity(1);
     windowManager.setTitle(getWindowName());
+    windowManager.setResizable(!bind.isIncomingOnly());
   });
 }
 
 void runMobileApp() async {
   await initEnv(kAppTypeMain);
   if (isAndroid) androidChannelInit();
-  platformFFI.syncAndroidServiceAppDirConfigPath();
+  if (isAndroid) platformFFI.syncAndroidServiceAppDirConfigPath();
   //await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
-  //hophere
-  //await gFFI.invokeMethod("init_service_connect");
-  //await bind.mainStartService();
- 
   runApp(App());
 }
 
@@ -254,10 +239,11 @@ void runConnectionManagerScreen() async {
   }
   windowManager.setResizable(false);
   // Start the uni links handler and redirect links to Native, not for Flutter.
-  _uniLinkSubscription = listenUniLinks(handleByFlutter: false);
+    listenUniLinks(handleByFlutter: false);
 }
 
 bool _isCmReadyToShow = false;
+
 showCmWindow({bool isStartup = false}) async {
   if (isStartup) {
     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
@@ -442,7 +428,7 @@ class _AppState extends State<App> {
               ? (context, child) => AccessibilityListener(
                     child: MediaQuery(
                       data: MediaQuery.of(context).copyWith(
-                        textScaleFactor: 1.0,
+                        textScaler: TextScaler.linear(1.0),
                       ),
                       child: child ?? Container(),
                     ),
@@ -464,7 +450,7 @@ class _AppState extends State<App> {
 Widget _keepScaleBuilder(BuildContext context, Widget? child) {
   return MediaQuery(
     data: MediaQuery.of(context).copyWith(
-      textScaleFactor: 1.0,
+      textScaler: TextScaler.linear(1.0),
     ),
     child: child ?? Container(),
   );

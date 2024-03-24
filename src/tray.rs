@@ -21,18 +21,18 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
     use tao::event_loop::{ControlFlow, EventLoopBuilder};
     use tray_icon::{
         menu::{Menu, MenuEvent, MenuItem},
-        TrayEvent, TrayIconBuilder,
+        TrayIconBuilder, TrayIconEvent as TrayEvent,
     };
     let icon;
     #[cfg(target_os = "macos")]
     {
-		const LIGHT: &[u8] = include_bytes!("../res/mac-tray-light-x2.png");
-		icon = LIGHT;
+		icon = include_bytes!("../res/mac-tray-light-x2.png"); // use as template, so color is not important
     }
     #[cfg(not(target_os = "macos"))]
     {
         icon = include_bytes!("../res/tray-icon.ico");
     }
+
     let (icon_rgba, icon_width, icon_height) = {
         let image = image::load_from_memory(icon)
             .context("Failed to open icon path")?
@@ -41,7 +41,7 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
         let rgba = image.into_raw();
         (rgba, width, height)
     };
-    let icon = tray_icon::icon::Icon::from_rgba(icon_rgba, icon_width, icon_height)
+    let icon = tray_icon::Icon::from_rgba(icon_rgba, icon_width, icon_height)
         .context("Failed to open icon")?;
 
     let event_loop = EventLoopBuilder::new().build();
@@ -49,9 +49,7 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
     let tray_menu = Menu::new();
     let quit_i = MenuItem::new(translate("Exit".to_owned()), true, None);
     let open_i = MenuItem::new(translate("Open".to_owned()), true, None);
-	let stopserv_i = MenuItem::new(crate::client::translate("Stop Service".to_owned()), true, None);
-	//tray_menu.append_items(&[&open_i, &stopserv_i, &quit_i]);
-    tray_menu.append_items(&[&open_i, &quit_i]);
+    tray_menu.append_items(&[&open_i, &quit_i]).ok();
     let tooltip = |count: usize| {
         if count == 0 {
             format!(
@@ -71,13 +69,9 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
     let _tray_icon = Some(
         TrayIconBuilder::new()
             .with_menu(Box::new(tray_menu))
-            /*.with_tooltip(format!(
-                "{} {}",
-                crate::get_app_name(),
-                crate::lang::translate("Service is running".to_owned())
-            ))*/
             .with_tooltip(tooltip(0))
             .with_icon(icon)
+            .with_icon_as_template(true) // mac only
             .build()?,
     );
     let _tray_icon = Arc::new(Mutex::new(_tray_icon));
@@ -92,26 +86,9 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
         if cfg!(not(feature = "flutter")) {
 	        crate::run_me(Vec::<&str>::new()).ok();
 	        std::process::exit(0);
-	        //crate::run_me::<&str>(vec![]).ok();
-	        //return;
         }
         #[cfg(target_os = "macos")]
         crate::platform::macos::handle_application_should_open_untitled_file();
-        //#[cfg(target_os = "windows")]
-        //{
-			//crate::run_me(Vec::<&str>::new()).ok();
-			//std::process::exit(0);
-			/*
-			use std::os::windows::process::CommandExt;
-            use std::process::Command;
-            Command::new("cmd")
-                .arg("/c")
-                .arg("start hoptodesk://")
-                .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
-                .spawn()
-                .ok();
-				*/
-        //}
         #[cfg(target_os = "linux")]
         if !std::process::Command::new("xdg-open")
             .arg("hoptodesk://")
@@ -126,6 +103,8 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
     std::thread::spawn(move || {
         start_query_session_count(ipc_sender.clone());
     });
+    #[cfg(windows)]
+    let mut last_click = std::time::Instant::now();
     event_loop.run(move |_event, _, control_flow| {
         if !docker_hiden {
             #[cfg(target_os = "macos")]
@@ -138,37 +117,28 @@ pub fn make_tray() -> hbb_common::ResultType<()> {
 
         if let Ok(event) = menu_channel.try_recv() {
             if event.id == quit_i.id() {
-                if !crate::check_process("--server", false) {
+                /*if !crate::check_process("--server", false) {
                     *control_flow = ControlFlow::Exit;
                     return;
-                }
+                }*/
                 if !crate::platform::uninstall_service(false) {
                     *control_flow = ControlFlow::Exit;
                 }
             } else if event.id == open_i.id() {
 				open_func();
-            } else if event.id == stopserv_i.id() {
-                #[cfg(target_os = "windows")]
-                {
-                	Config::set_option("stop-service".into(), "Y".into());
-					let cmds = format!(
-						"
-					chcp 65001
-					sc stop {app_name}
-					",
-						app_name = crate::get_app_name(),
-					);
-					if let Err(_err) = crate::platform::windows::run_cmds(cmds, false, "uninstall") {
-						Config::set_option("stop-service".into(), "".into());
-					}
-				}
             }
         }
 
         if let Ok(_event) = tray_channel.try_recv() {
             #[cfg(target_os = "windows")]
-            if _event.event == tray_icon::ClickEvent::Left {
+            if _event.click_type == tray_icon::ClickType::Left
+                || _event.click_type == tray_icon::ClickType::Double
+            {
+                if last_click.elapsed() < std::time::Duration::from_secs(1) {
+                    return;
+                }
                 open_func();
+                last_click = std::time::Instant::now();
             }
         }
 

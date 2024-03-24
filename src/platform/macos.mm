@@ -13,6 +13,11 @@ extern "C" bool CanUseNewApiForScreenCaptureCheck() {
     #endif
 }
 
+extern "C" uint32_t majorVersion() {
+    NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
+    return version.majorVersion;
+}
+
 extern "C" bool IsCanScreenRecording(bool prompt) {
     #ifdef NO_InputMonitoringAuthStatus
     return false;

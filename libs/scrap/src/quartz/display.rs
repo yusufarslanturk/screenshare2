@@ -71,7 +71,13 @@ impl Display {
     }
 
     pub fn scale(self) -> f64 {
-        // unsafe { BackingScaleFactor() as _ }
+        let s = unsafe { BackingScaleFactor() as _ };
+        if s > 1. {
+            let enable_retina = super::ENABLE_RETINA.lock().unwrap().clone();
+            if enable_retina {
+                return s;
+            }
+        }
         1.
     }
 

@@ -29,6 +29,8 @@ pub use file_trait::FileManager;
 #[cfg(not(feature = "flutter"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use hbb_common::tokio::sync::mpsc::UnboundedSender;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use hbb_common::tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 use hbb_common::{
     allow_err,
     anyhow::{anyhow, Context},
@@ -39,18 +41,14 @@ use hbb_common::{
     },
     get_version_number, log,
     message_proto::{option_message::BoolOption, *},
-    protobuf::Message as _,
-    rand,
-    rendezvous_proto::*,
+    protobuf::Message as _, rand, rendezvous_proto::*,
+    set_direct_initial_public_key_request,
     socket_client,
-    sodiumoxide::base64,
-    sodiumoxide::crypto::{box_, secretbox, sign},
+    sodiumoxide::{base64, crypto::{box_, secretbox, sign}},
     tcp::FramedStream,
     timeout,
-    tokio::time::Duration,
-    tokio::{self, net::TcpStream},
-    //AddrMangle,
-    ResultType, Stream,
+    tokio::{self, net::TcpStream, time::Duration},
+    ResultType, Stream
 };
 pub use helper::*;
 use scrap::{
@@ -69,7 +67,7 @@ use crate::{
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::ui_session_interface::SessionPermissionConfig;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::{check_clipboard, ClipboardContext, CLIPBOARD_INTERVAL};
+use crate::{check_clipboard, CLIPBOARD_INTERVAL};
 
 pub use super::lang::*;
 
@@ -610,6 +608,65 @@ impl Client {
         }
     }
 
+    pub async fn get_initial_public_key_for_handshake(
+        peer_id: &str,
+        id_pk: Vec<u8>,
+        conn: &mut Stream,
+    ) -> ResultType<Option<sign::PublicKey>> {
+        match get_pk(&id_pk) {
+            Some(pk) => {
+                Ok(Some(sign::PublicKey(pk)))
+            }
+            None => {
+                log::error!("Couldn't get initial public key from rendezvous server");
+                match get_pk(&PeerConfig::load(peer_id).public_key) {
+                    Some(pk) => {
+                        log::info!("Got initial public key from peer config");
+                        Ok(Some(sign::PublicKey(pk)))
+                    }
+                    None => {
+                        log::info!("Couldn't get initial public key from peer config");
+                        // As a last resort we make a direct request to the server for its (unauthenticated) initial public key.
+                        // The encryption and key exchange this lets us support still leaves us relatively more secure (e.g., 
+                        // against passive eavesdropping attacks) than not supporting them at all.
+                        log::info!("Attempting to request initial public key directly from server");
+                        let mut msg_out = Message::new();
+                        set_direct_initial_public_key_request(&mut msg_out);
+                        timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
+                        match timeout(CONNECT_TIMEOUT, conn.peek()).await? {  
+                            Some(res) => {
+                                let bytes = res?;
+                                if let Ok(msg_in) = Message::parse_from_bytes(bytes) {
+                                    if let Some(message::Union::Misc (
+                                        Misc { union: Some(
+                                            misc::Union::UnauthenticatedInitialPublicKeyResponse(ref resp, ..)
+                                        ), .. }
+                                    )) = msg_in.union {
+                                        let mut id_pk: [u8; 32] = [0u8; sign::PUBLICKEYBYTES];
+                                        id_pk[..].copy_from_slice(&resp.unauthenticated_initial_public_key);
+                                        Ok(Some(sign::PublicKey(id_pk)))
+                                    }
+                                    else {
+                                        log::error!("Didn't get the expected initial public key response (invalid message type)");
+                                        Ok(None)
+                                    }
+                                }
+                                else {
+                                    log::error!("Didn't get the expected initial public key response (invalid message format)");
+                                    Ok(None)
+                                }
+                            }
+                            None => {
+                                log::error!("Couldn't get initial public key through any method.");
+                                Ok(None)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn secure_connection(
         peer_id: &str,
         id_pk: Vec<u8>,
@@ -617,73 +674,75 @@ impl Client {
     ) -> ResultType<(String, String)> {
         let mut security_numbers = String::new();
         let avatar_image = String::new();
-        let mut sign_pk = None;
-        if !id_pk.is_empty() {
-            let t = get_pk(&id_pk);
-            if let Some(pk) = t {
-                sign_pk = Some(sign::PublicKey(pk));
-            }
-
-            if sign_pk.is_none() {
-                log::error!("Handshake failed: invalid public key from rendezvous server");
-            }
-        }
-        let sign_pk = match sign_pk {
-            Some(v) => v,
-            None => {
-                // send an empty message out in case server is setting up secure and waiting for first message
-                conn.send(&Message::new()).await?;
-                return Ok((security_numbers, avatar_image));
-            }
-        };
-        log::info!("Start secure connecton");
-        match timeout(CONNECT_TIMEOUT, conn.next()).await? {
+        
+        // Server should always send a SignedId message first, so we start 
+        // by receiving that, to clear the connection backlog before getting the initial public key
+        // (in case that requires us to get another response from the server) 
+        let signed_id = match timeout(CONNECT_TIMEOUT, conn.next()).await? {
             Some(res) => {
                 let bytes = res?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
-                    if let Some(message::Union::SignedId(si)) = msg_in.union {
-                        if let Ok((id, their_pk_b)) = decode_id_pk(&si.id, &sign_pk) {
-                            if id == peer_id {
-                                let their_pk_b = box_::PublicKey(their_pk_b);
-                                let (our_pk_b, out_sk_b) = box_::gen_keypair();
-                                let key = secretbox::gen_key();
-                                let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
-                                let sealed_key = box_::seal(&key.0, &nonce, &their_pk_b, &out_sk_b);
-                                let mut msg_out = Message::new();
-                                msg_out.set_public_key(PublicKey {
-                                    asymmetric_value: Vec::from(our_pk_b.0).into(),
-                                    symmetric_value: sealed_key.into(),
-                                    ..Default::default()
-                                });
-                                timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
-                                conn.set_key(key);
-                                security_numbers = hbb_common::password_security::compute_security_code(&out_sk_b, &their_pk_b,);
-                                log::info!("Connection is secured: {}, and Security Code is: {}", conn.is_secured(), security_numbers);
-                            } else {
-                                log::error!("Handshake failed: sign failure");
-                                conn.send(&Message::new()).await?;
-                            }
-                        } else {
-                            // fall back to non-secure connection in case pk mismatch
-                            log::info!("pk mismatch, fall back to non-secure");
-                            let mut msg_out = Message::new();
-                            msg_out.set_public_key(PublicKey::new());
-                            timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
-                        }
-                    } else {
+                    if let Some(message::Union::SignedId(si)) = msg_in.union { 
+                        log::info!("Got SignedId message from server");
+                        si
+                    }
+                    else {
                         log::error!("Handshake failed: invalid message type");
                         conn.send(&Message::new()).await?;
+                        return Ok((security_numbers, avatar_image));
                     }
-                } else {
+                }
+                else {
                     log::error!("Handshake failed: invalid message format");
                     conn.send(&Message::new()).await?;
+                    return Ok((security_numbers, avatar_image));
                 }
             }
             None => {
                 bail!("Connection lost");
             }
+        };
+
+        match Self::get_initial_public_key_for_handshake(peer_id, id_pk, conn).await? {
+            None => {
+                log::error!("Handshake failed."); 
+                conn.send(&Message::new()).await?;
+                // Couldn't get the public key, so return without actually securing the connection
+                Ok((security_numbers, avatar_image))
+            },
+            Some(sign_pk) => {               
+                log::info!("Start secure connection");              
+                if let Ok((id, their_pk_b)) = decode_id_pk(&signed_id.id, &sign_pk) {
+                    if id == peer_id {
+                        let their_pk_b = box_::PublicKey(their_pk_b);
+                        let (our_pk_b, out_sk_b) = box_::gen_keypair();
+                        let key = secretbox::gen_key();
+                        let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
+                        let sealed_key = box_::seal(&key.0, &nonce, &their_pk_b, &out_sk_b);
+                        let mut msg_out = Message::new();
+                        msg_out.set_public_key(PublicKey {
+                            asymmetric_value: Vec::from(our_pk_b.0).into(),
+                            symmetric_value: sealed_key.into(),
+                            ..Default::default()
+                        });
+                        timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
+                        conn.set_key(key);
+                        security_numbers = hbb_common::password_security::compute_security_code(&out_sk_b, &their_pk_b,);
+                        log::info!("Connection is secured: {}, and Security Code is: {}", conn.is_secured(), security_numbers);
+                    } else {
+                        log::error!("Handshake failed: sign failure");
+                        conn.send(&Message::new()).await?;
+                    }
+                } else {
+                    // fall back to non-secure connection in case pk mismatch
+                    log::info!("pk mismatch, fall back to non-secure");
+                    let mut msg_out = Message::new();
+                    msg_out.set_public_key(PublicKey::new());
+                    timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
+                }
+                Ok((security_numbers, avatar_image))
+            }
         }
-        Ok((security_numbers, avatar_image))
     }
 
     #[inline]
@@ -694,12 +753,9 @@ impl Client {
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn try_stop_clipboard(_self_id: &str) {
+    fn try_stop_clipboard() {
         #[cfg(feature = "flutter")]
-        if crate::flutter::sessions::other_sessions_running(
-            _self_id.to_string(),
-            ConnType::DEFAULT_CONN,
-        ) {
+        if crate::flutter::sessions::has_sessions_running(ConnType::DEFAULT_CONN) {
             return;
         }
         TEXT_CLIPBOARD_STATE.lock().unwrap().running = false;
@@ -711,47 +767,48 @@ impl Client {
     //
     // If clipboard update is detected, the text will be sent to all sessions by `send_text_clipboard_msg`.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    fn try_start_clipboard(_ctx: Option<ClientClipboardContext>) {
+    fn try_start_clipboard(_ctx: Option<ClientClipboardContext>) -> Option<UnboundedReceiver<()>> {
         let mut clipboard_lock = TEXT_CLIPBOARD_STATE.lock().unwrap();
         if clipboard_lock.running {
-            return;
+            return None;
         }
+        clipboard_lock.running = true;
+        let (tx, rx) = unbounded_channel();
 
-        match ClipboardContext::new() {
-            Ok(mut ctx) => {
-                clipboard_lock.running = true;
-                // ignore clipboard update before service start
-                check_clipboard(&mut ctx, Some(&OLD_CLIPBOARD_TEXT));
-                std::thread::spawn(move || {
-                    log::info!("Start text clipboard loop");
-                    loop {
-                        std::thread::sleep(Duration::from_millis(CLIPBOARD_INTERVAL));
-                        if !TEXT_CLIPBOARD_STATE.lock().unwrap().running {
-                            break;
-                        }
+        log::info!("Start text clipboard loop");
+        std::thread::spawn(move || {
+            let mut is_sent = false;
+            let mut ctx = None;
+            loop {
+                if !TEXT_CLIPBOARD_STATE.lock().unwrap().running {
+                    break;
+                }
+                if !TEXT_CLIPBOARD_STATE.lock().unwrap().is_required {
+                    continue;
+                }
 
-                        if !TEXT_CLIPBOARD_STATE.lock().unwrap().is_required {
-                            continue;
-                        }
-
-                        if let Some(msg) = check_clipboard(&mut ctx, Some(&OLD_CLIPBOARD_TEXT)) {
-                            #[cfg(feature = "flutter")]
-                            crate::flutter::send_text_clipboard_msg(msg);
-                            #[cfg(not(feature = "flutter"))]
-                            if let Some(ctx) = &_ctx {
-                                if ctx.cfg.is_text_clipboard_required() {
-                                    let _ = ctx.tx.send(Data::Message(msg));
-                                }
-                            }
+                if let Some(msg) = check_clipboard(&mut ctx, Some(&OLD_CLIPBOARD_TEXT)) {
+                    #[cfg(feature = "flutter")]
+                    crate::flutter::send_text_clipboard_msg(msg);
+                    #[cfg(not(feature = "flutter"))]
+                    if let Some(ctx) = &_ctx {
+                        if ctx.cfg.is_text_clipboard_required() {
+                            let _ = ctx.tx.send(Data::Message(msg));
                         }
                     }
-                    log::info!("Stop text clipboard loop");
-                });
+                }
+
+                if !is_sent {
+                    is_sent = true;
+                    tx.send(()).ok();
+                }
+
+                std::thread::sleep(Duration::from_millis(CLIPBOARD_INTERVAL));
             }
-            Err(err) => {
-                log::error!("Failed to start clipboard service of client: {}", err);
-            }
-        }
+            log::info!("Stop text clipboard loop");
+        });
+
+        Some(rx)
     }
 
     #[inline]
@@ -1129,6 +1186,10 @@ pub struct LoginConfigHandler {
     pub other_server: Option<(String, String, String)>,
     pub custom_fps: Arc<Mutex<Option<usize>>>,
     pub adapter_luid: Option<i64>,
+    //pub mark_unsupported: Vec<CodecFormat>,
+    pub selected_windows_session_id: Option<u32>,
+    pub peer_info: Option<PeerInfo>,
+    shared_password: Option<String>, // used to distinguish whether it is connected with a shared password
 }
 
 impl Deref for LoginConfigHandler {
@@ -1158,6 +1219,7 @@ impl LoginConfigHandler {
         switch_uuid: Option<String>,
         force_relay: bool,
         adapter_luid: Option<i64>,
+        shared_password: Option<String>,        
         tokenex: String,
     ) {
 /*
@@ -1223,6 +1285,8 @@ impl LoginConfigHandler {
         self.received = false;
         self.switch_uuid = switch_uuid;
         self.adapter_luid = adapter_luid;        
+        self.selected_windows_session_id = None;
+        self.shared_password = shared_password;
     }
     /*
         // XXX: fix conflicts between with config that introduces by Deref.
@@ -2740,6 +2804,7 @@ pub trait Interface: Send + Clone + 'static + Sized {
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str);
     fn handle_login_error(&self, err: &str) -> bool;
     fn handle_peer_info(&self, pi: PeerInfo);
+    fn set_multiple_windows_session(&self, sessions: Vec<WindowsSession>);
     fn on_error(&self, err: &str) {
         self.msgbox("error", "Error", err, "");
     }
